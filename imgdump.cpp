@@ -5,10 +5,8 @@
 #include <QFileInfo>
 #include <QDebug>
 #include <QCoreApplication>
-
-#define DBG
-
-#define HOST_IS_64_BIT
+#include <QCommandLineParser>
+#include <QCommandLineOption>
 
 #define DEBUG_SHOW_SECT_DESC
 #define DEBUG_SHOW_TRE_DATA
@@ -21,39 +19,13 @@
 // #define DEBUG_SHOW_POLY_DATA_DECODE2
 #define DEBUG_SHOW_POLY_PTS
 
-#define NOFLOAT 1000000000000.0
-#define NOINT 0x7FFFFFFF
-#define NOTIME 0xFFFFFFFF
-#define NOIDX (-1)
+#define MAX_FLOAT_PREC 16777216.0     // 2^24: precision limit of float
+#define RAD_TO_DEG 57.295779513082321 // 180 / M_PI ?
+#define GARMIN_DEG(x) ((x) < 0x800000 ? (qreal)(x) * 360.0 / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * 360.0 / MAX_FLOAT_PREC)
+#define GARMIN_RAD(x) ((x) < 0x800000 ? (qreal)(x) * (2 * M_PI) / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * (2 * M_PI) / MAX_FLOAT_PREC)
 
-#define PI M_PI
-#define TWOPI (2 * PI)
-
-#define RAD_TO_DEG 57.295779513082321
-#define DEG_TO_RAD .017453292519943296
-
-#define GARMIN_DEG(x) ((x) < 0x800000 ? (qreal)(x) * 360.0 / 16777216.0 : (qreal)((x) - 0x1000000) * 360.0 / 16777216.0)
-#define GARMIN_RAD(x) \
-  ((x) < 0x800000 ? (qreal)(x) * (2 * M_PI) / 16777216.0 : (qreal)((x) - 0x1000000) * (2 * M_PI) / 16777216.0)
-typedef quint8 quint24[3];
-
-// little endian platform: just return the argument
-#define gar_endian(t, x) (t)(x)
-
-// macros to deal with pointers or unaligned arguments
 // load argument of type t from pointer p
 #define gar_ptr_load(t, p) __gar_ptr_load_##t((const uint8_t *)(p))
-
-// store argument src of type t in in the location to which the pointer p points
-#define gar_ptr_store(t, p, src) __gar_ptr_store_##t((uint8_t *)(p), (src))
-
-// load argument x of type t - noop with proper cast
-#define gar_load(t, x) (t)(x)
-
-// store argument src of type t in the variable dst of type t - just assign
-#define gar_store(t, dst, src) (dst) = (src)
-
-// load from pointer - simply map memory
 #define __gar_ptr_load_int16_t(p) (*((int16_t *)(p)))
 #define __gar_ptr_load_int32_t(p) (*((int32_t *)(p)))
 #define __gar_ptr_load_int64_t(p) (*((int64_t *)(p)))
@@ -64,6 +36,9 @@ typedef quint8 quint24[3];
 #define __gar_ptr_load_double(p) (*((double *)(p)))
 #define __gar_ptr_load_uint24_t(p) (__gar_ptr_load_quint32(p) & 0x00FFFFFFu)
 #define __gar_ptr_load_int24_t(p) (__gar_ptr_load_int32_t(p) & 0x00FFFFFFu)
+
+// store argument src of type t in in the location to which the pointer p points
+#define gar_ptr_store(t, p, src) __gar_ptr_store_##t((uint8_t *)(p), (src))
 #define __gar_ptr_store_int16_t(p, src) (*((int16_t *)(p))) = (src)
 #define __gar_ptr_store_int32_t(p, src) (*((int32_t *)(p))) = (src)
 #define __gar_ptr_store_int64_t(p, src) (*((int64_t *)(p))) = (src)
@@ -73,12 +48,11 @@ typedef quint8 quint24[3];
 #define __gar_ptr_store_float(p, src) (*((float *)(p))) = (src)
 #define __gar_ptr_store_double(p, src) (*((double *)(p))) = (src)
 
-typedef struct
-{
-  double u, v;
-} PJ_UV;
+#define gar_endian(t, x) (t)(x) // little endian platform: just return the argument
+#define gar_load(t, x) (t)(x)   // load argument x of type t - noop with proper cast
 
-struct subdiv_desc_t;
+typedef quint8 quint24[3];
+
 struct sign_info_t
 {
   quint32 sign_info_bits = 2;
@@ -87,44 +61,6 @@ struct sign_info_t
   bool y_has_sign = true;
   bool ny = false;
 };
-
-static inline void __gar_ptr_store_int24_t(uint8_t *p, int32_t src)
-{
-  __gar_ptr_store_uint16_t(p, src & 0xffffu);
-  p[2] = src >> 16;
-}
-
-static inline void __gar_ptr_store_uint24_t(uint8_t *p, quint32 src)
-{
-  __gar_ptr_store_uint16_t(p, src & 0xffffu);
-  p[2] = src >> 16;
-}
-
-inline void GPS_Math_DegMin_To_Deg(bool sign, const qint32 d, const qreal m, qreal &deg)
-{
-  deg = qAbs(d) + m / 60.0;
-  if (sign)
-  {
-    deg = -deg;
-  }
-}
-
-inline void GPS_Math_DegMinSec_To_Deg(bool sign, const qint32 d, const qint32 m, const qreal s, qreal &deg)
-{
-  deg = qAbs(d) + qreal(m) / 60.0 + s / 3600;
-  if (sign)
-  {
-    deg = -deg;
-  }
-}
-
-inline bool GPS_Math_Deg_To_DegMin(qreal v, qint32 *deg, qreal *min)
-{
-  *deg = qAbs(v);
-  *min = (qAbs(v) - *deg) * 60.0;
-
-  return v < 0;
-}
 
 class CFileExt : public QFile
 {
@@ -140,7 +76,7 @@ public:
   }
 
 private:
-  static int cnt;
+  inline static int cnt = 0;
 
   uchar *mapped;
   QSet<uchar *> mappedSections;
@@ -236,7 +172,6 @@ protected:
       return;
     }
 
-#ifdef HOST_IS_64_BIT
     quint64 *p64 = (quint64 *)data.data();
     for (quint32 i = 0; i < size / 8; ++i)
     {
@@ -244,15 +179,6 @@ protected:
     }
     quint32 rest = size % 8;
     quint8 *p = (quint8 *)p64;
-#else
-    quint32 *p32 = (quint32 *)data.data();
-    for (quint32 i = 0; i < size / 4; ++i)
-    {
-      *p32++ ^= mask32;
-    }
-    quint32 rest = size % 4;
-    quint8 *p = (quint8 *)p32;
-#endif
 
     for (quint32 i = 0; i < rest; ++i)
     {
@@ -477,8 +403,7 @@ public:
 
     if (offset > (quint32)sizeLBL1)
     {
-      // qWarning() << "Index into string table to large" << Qt::hex << offset << dataLBL.size() << hdrLbl->addr_shift <<
-      // hdrNet->net1_addr_shift;
+      // qWarning() << "Index into string table to large" << Qt::hex << offset << dataLBL.size() << hdrLbl->addr_shift << hdrNet->net1_addr_shift;
       return;
     }
 
@@ -603,42 +528,6 @@ public:
     }
 
     return byte_size;
-  }
-
-  QString getLabelText() const
-  {
-    QString str;
-    if (!labels.isEmpty())
-    {
-      if ((type == 0x6200) || (type == 0x6300))
-      {
-        qDebug() << "1" << labels;
-        QString unit;
-        QString val = labels[0];
-        // IUnit::self().meter2elevation(val.toFloat() / 3.28084f, val, unit);
-        str = QString("%1 %2").arg(val, unit);
-      }
-      //        else if(type == 0x6616) //669 DAV
-      //        {
-      //            qDebug() << "2" << labels;
-      //            if(labels.size() > 1)
-      //            {
-      //                QString unit;
-      //                QString val = labels[1];
-      //                IUnit::self().meter2elevation(val.toFloat() / 3.28084f, val, unit);
-      //                str = QString("%1 %2 %3").arg(labels[0]).arg(val, unit);
-      //            }
-      //            else
-      //            {
-      //                str = labels[0];
-      //            }
-      //        }
-      else
-      {
-        str = labels.join(" ");
-      }
-    }
-    return str;
   }
 
   bool hasLabel() const { return !labels.isEmpty(); }
@@ -824,32 +713,6 @@ private:
 
 class CGarminPolygon
 {
-private:
-  QString convertPolygonToDegreesString(const QPolygonF &polygon)
-  {
-    QString result;
-    const double radToDeg = 180.0 / M_PI;
-
-    for (const QPointF &point : polygon)
-    {
-      // Конвертиране от радиани в градуси
-      double lon = point.x() * radToDeg;
-      double lat = point.y() * radToDeg;
-
-      // Форматиране с 5 знака след десетичната запетая
-      QString pointStr = QString("(%1,%2)").arg(lat, 0, 'f', 5).arg(lon, 0, 'f', 5);
-
-      // Добавяне към резултата (с запетая между точките)
-      if (!result.isEmpty())
-      {
-        result += ",";
-      }
-      result += pointStr;
-    }
-
-    return "Data0=" + result;
-  }
-
 public:
   CGarminPolygon() = default;
   virtual ~CGarminPolygon() = default;
@@ -1018,7 +881,7 @@ public:
 
     pixel = coords;
 
-    qDebug() << "decode1() coords:" << type << Qt::hex << type << Qt::hex << bs_info << coords << convertPolygonToDegreesString(coords) << id;
+    qDebug() << "decode1() coords:" << type << Qt::hex << type << Qt::hex << bs_info << coords << id;
 
     return bytes_total;
   }
@@ -1160,36 +1023,8 @@ public:
     pixel = coords;
 
     // qDebug() << "decode2() coords:" << type << Qt::hex << type << bs_info << coords;
-    qDebug() << "decode2() coords:" << type << Qt::hex << type << Qt::hex << subtype << Qt::hex << bs_info << coords << convertPolygonToDegreesString(coords);
 
     return bytes_total;
-  }
-
-  QString getLabelText() const
-  {
-    QString str;
-
-    switch (type)
-    {
-    case 0x23: //< "Minor depth contour"
-    case 0x20: //< "Minor land contour"
-    case 0x24: //< "Intermediate depth contour"
-    case 0x21: //< "Intermediate land contour"
-    case 0x25: //< "Major depth contour"
-    case 0x22: //< "Major land contour"
-    {
-      QString unit;
-      QString val = labels[0];
-      // IUnit::self().meter2elevation(val.toFloat() / 3.28084f, val, unit);
-      str = QString("%1 %2").arg(val, unit);
-    }
-    break;
-
-    default:
-      str = labels.join(" ").simplified();
-    }
-
-    return str;
   }
 
   bool hasLabel() const { return !labels.isEmpty(); }
@@ -1300,1529 +1135,98 @@ private:
   }
 };
 
-class CGarminTyp
-{
-public:
-  CGarminTyp() = default;
-  virtual ~CGarminTyp() = default;
-
-  enum label_type_e
-  {
-    eStandard = 0,
-    eNone = 1,
-    eSmall = 2,
-    eNormal = 3,
-    eLarge = 4
-  };
-
-  struct polyline_property
-  {
-    polyline_property()
-        : type(0),
-          penLineDay(Qt::magenta, 3),
-          penLineNight(Qt::magenta, 3),
-          hasBorder(false),
-          penBorderDay(Qt::NoPen),
-          penBorderNight(Qt::NoPen),
-          hasPixmap(false),
-          labelType(eStandard),
-          colorLabelDay(Qt::black),
-          colorLabelNight(Qt::black),
-          known(false)
-
-    {
-    }
-
-    polyline_property(quint16 type, const QPen &penLineDay, const QPen &penLineNight, const QPen &penBorderDay,
-                      const QPen &penBorderNight)
-        : type(type),
-          penLineDay(penLineDay),
-          penLineNight(penLineNight),
-          hasBorder(true),
-          penBorderDay(penBorderDay),
-          penBorderNight(penBorderNight),
-          hasPixmap(false),
-          labelType(eStandard),
-          colorLabelDay(Qt::black),
-          colorLabelNight(Qt::black),
-          known(true) {}
-
-    polyline_property(quint16 type, const QColor &color, int width, Qt::PenStyle style)
-        : type(type),
-          penLineDay(QPen(color, width, style)),
-          penLineNight(penLineDay),
-          hasBorder(false),
-          penBorderDay(Qt::NoPen),
-          penBorderNight(Qt::NoPen),
-          hasPixmap(false),
-          labelType(eStandard),
-          colorLabelDay(Qt::black),
-          colorLabelNight(Qt::black),
-          known(true) {}
-
-    quint16 type;
-
-    QPen penLineDay;
-    QPen penLineNight;
-
-    bool hasBorder;
-    QPen penBorderDay;
-    QPen penBorderNight;
-
-    bool hasPixmap;
-    QImage imgDay;
-    QImage imgNight;
-
-    QMap<int, QString> strings;
-    label_type_e labelType;
-    QColor colorLabelDay;
-    QColor colorLabelNight;
-
-    bool known;
-  };
-
-  struct polygon_property
-  {
-    polygon_property()
-        : type(0),
-          pen(Qt::magenta),
-          brushDay(Qt::magenta, Qt::BDiagPattern),
-          brushNight(Qt::magenta, Qt::BDiagPattern),
-          labelType(eStandard),
-          colorLabelDay(Qt::black),
-          colorLabelNight(Qt::black),
-          known(false) {}
-
-    polygon_property(quint16 type, const Qt::PenStyle pensty, const QColor &brushColor, Qt::BrushStyle pattern)
-        : type(type),
-          pen(pensty),
-          brushDay(brushColor, pattern),
-          brushNight(brushColor.darker(150), pattern),
-          labelType(eStandard),
-          colorLabelDay(Qt::black),
-          colorLabelNight(Qt::black),
-          known(true)
-    {
-      pen.setWidth(1);
-    }
-
-    polygon_property(quint16 type, const QColor &penColor, const QColor &brushColor, Qt::BrushStyle pattern)
-        : type(type),
-          pen(penColor, 1),
-          brushDay(brushColor, pattern),
-          brushNight(brushColor.darker(150), pattern),
-          labelType(eStandard),
-          colorLabelDay(Qt::black),
-          colorLabelNight(Qt::black),
-          known(true) {}
-
-    quint16 type;
-    QPen pen;
-    QBrush brushDay;
-    QBrush brushNight;
-
-    QMap<int, QString> strings;
-    label_type_e labelType;
-    QColor colorLabelDay;
-    QColor colorLabelNight;
-    bool known;
-  };
-
-  struct point_property
-  {
-    point_property() : labelType(eStandard) {}
-    QImage imgDay;
-    QImage imgNight;
-
-    QMap<int, QString> strings;
-    label_type_e labelType;
-    QColor colorLabelDay;
-    QColor colorLabelNight;
-  };
-
-  /// decode typ file
-  /**
-      This pure virtual function has to be implemented in every subclass. It should
-      be the only public function needed. The typ file is read and it's content is
-      stored in the passed map/list objects.
-
-      @param in input data stream
-      @param polygons reference to polygon properties map
-      @param polylines reference to polyline properties map
-      @param drawOrder reference to list of polygon draw orders
-      @param points reference to point properties map
-
-   */
-  bool decode(const QByteArray &array, QMap<quint32, polygon_property> &polygons,
-              QMap<quint32, polyline_property> &polylines, QList<quint32> &drawOrder,
-              QMap<quint32, point_property> &points)
-  {
-    QDataStream in(array);
-    in.setVersion(QDataStream::Qt_4_5);
-    in.setByteOrder(QDataStream::LittleEndian);
-
-    /* Read typ file descriptor */
-    quint16 descriptor;
-    in >> descriptor;
-
-    qDebug() << "descriptor" << Qt::hex << descriptor;
-
-    if (!parseHeader(in))
-    {
-      return false;
-    }
-
-    if (!parseDrawOrder(in, drawOrder))
-    {
-      return false;
-    }
-
-    if (!parsePolygon(in, polygons))
-    {
-      return false;
-    }
-
-    if (!parsePolyline(in, polylines))
-    {
-      return false;
-    }
-
-    if (!parsePoint(in, points))
-    {
-      return false;
-    }
-
-    return true;
-  }
-
-  QSet<quint8> getLanguages() { return languages; }
-
-  quint16 getFid() { return fid; }
-
-  quint16 getPid() { return pid; }
-
-protected:
-  virtual bool parseHeader(QDataStream &in)
-  {
-    int i;
-    QString garmintyp;
-    quint8 byte;
-
-    for (i = 0; i < 10; ++i)
-    {
-      in >> byte;
-      garmintyp.append(QChar(byte));
-    }
-    garmintyp.append(0);
-    if (garmintyp != "GARMIN TYP")
-    {
-      qDebug() << "CMapTDB::readTYP() not a known typ file";
-      return false;
-    }
-
-    /* reading typ creation date string */
-
-    in.device()->seek(0x0c);
-    in >> version >> year >> month >> day >> hour >> minutes >> seconds >> codepage;
-    month -= 1; /* Month are like Microsoft starting 0 ? */
-    year += 1900;
-
-    /* Reading points / lines / polygons struct */
-    in >> sectPoints.dataOffset >> sectPoints.dataLength;
-    in >> sectPolylines.dataOffset >> sectPolylines.dataLength;
-    in >> sectPolygons.dataOffset >> sectPolygons.dataLength;
-
-    in >> pid >> fid;
-
-    /* Read Array datas */
-    in >> sectPoints.arrayOffset >> sectPoints.arrayModulo >> sectPoints.arraySize;
-    in >> sectPolylines.arrayOffset >> sectPolylines.arrayModulo >> sectPolylines.arraySize;
-    in >> sectPolygons.arrayOffset >> sectPolygons.arrayModulo >> sectPolygons.arraySize;
-    in >> sectOrder.arrayOffset >> sectOrder.arrayModulo >> sectOrder.arraySize;
-
-#ifdef DBG
-    qDebug() << "Version:" << version << "Codepage:" << codepage;
-    qDebug() << "PID" << Qt::hex << pid << "FID" << Qt::hex << fid;
-    qDebug() << "Points     doff/dlen/aoff/amod/asize:" << Qt::hex << "\t" << sectPoints.dataOffset << "\t"
-             << sectPoints.dataLength << "\t" << sectPoints.arrayOffset << "\t" << sectPoints.arrayModulo << "\t"
-             << sectPoints.arrayOffset;
-    qDebug() << "Polylines  doff/dlen/aoff/amod/asize:" << Qt::hex << "\t" << sectPolylines.dataOffset << "\t"
-             << sectPolylines.dataLength << "\t" << sectPolylines.arrayOffset << "\t" << sectPolylines.arrayModulo << "\t"
-             << sectPolylines.arrayOffset;
-    qDebug() << "Polygons   doff/dlen/aoff/amod/asize:" << Qt::hex << "\t" << sectPolygons.dataOffset << "\t"
-             << sectPolygons.dataLength << "\t" << sectPolygons.arrayOffset << "\t" << sectPolygons.arrayModulo << "\t"
-             << sectPolygons.arrayOffset;
-    qDebug() << "Order      doff/dlen/aoff/amod/asize:" << Qt::hex << "\t" << sectOrder.dataOffset << "\t"
-             << sectOrder.dataLength << "\t" << sectOrder.arrayOffset << "\t" << sectOrder.arrayModulo << "\t"
-             << sectOrder.arrayOffset;
-#endif
-
-    return true;
-  }
-
-  virtual bool parseDrawOrder(QDataStream &in, QList<quint32> &drawOrder)
-  {
-    if (sectOrder.arraySize == 0)
-    {
-      return true;
-    }
-
-    if (sectOrder.arrayModulo != 5)
-    {
-      return false;
-    }
-
-    if ((sectOrder.arraySize % sectOrder.arrayModulo) != 0)
-    {
-      return true;
-    }
-
-    in.device()->seek(sectOrder.arrayOffset);
-
-    int i, n;
-    quint8 typ;
-    quint32 subtyp;
-
-    const int N = sectOrder.arraySize / sectOrder.arrayModulo;
-
-    for (i = 0; i < N; i++)
-    {
-      in >> typ >> subtyp;
-      //         qDebug() << Qt::hex << typ << subtyp;
-      if (typ == 0)
-      {
-      }
-      else if (subtyp == 0)
-      {
-#ifdef DBG
-        // qDebug() << QString("Type 0x%1 is priority %2").arg(typ, 0, 16).arg(count);
-#endif
-        int idx = drawOrder.indexOf(typ);
-        if (idx != NOIDX)
-        {
-          drawOrder.move(idx, 0);
-        }
-      }
-      else
-      {
-        quint32 exttyp = 0x010000 | (typ << 8);
-        quint32 mask = 0x1;
-
-        for (n = 0; n < 0x20; ++n)
-        {
-          if (subtyp & mask)
-          {
-            drawOrder.push_front(exttyp | n);
-#ifdef DBG
-            // qDebug() << QString("Type 0x%1 is priority %2").arg(exttyp | n, 0, 16).arg(count);
-#endif
-          }
-          mask = mask << 1;
-        }
-      }
-    }
-
-#ifdef DBG
-    for (unsigned i = 0; i < drawOrder.size(); ++i)
-    {
-      if (i && i % 16 == 0)
-      {
-        printf(" \n");
-      }
-      printf("%06X ", drawOrder[i]);
-    }
-
-    printf(" \n");
-#endif
-
-    return true;
-  }
-  virtual bool parsePolygon(QDataStream &in, QMap<quint32, polygon_property> &polygons)
-  {
-    bool tainted = false;
-
-    if (sectPolygons.arraySize == 0)
-    {
-      return true;
-    }
-
-    if (!sectPolygons.arrayModulo || ((sectPolygons.arraySize % sectPolygons.arrayModulo) != 0))
-    {
-      return true;
-    }
-
-    QTextCodec *codec = getCodec(codepage);
-
-    const int N = sectPolygons.arraySize / sectPolygons.arrayModulo;
-    for (int element = 0; element < N; element++)
-    {
-      quint16 t16_1 = 0, t16_2, subtyp;
-      quint8 t8;
-      quint32 typ, offset = 0;
-      bool hasLocalization = false;
-      bool hasTextColor = false;
-      quint8 ctyp;
-      QImage xpmDay(32, 32, QImage::Format_Indexed8);
-      QImage xpmNight(32, 32, QImage::Format_Indexed8);
-      quint8 r, g, b;
-      quint8 langcode;
-
-      in.device()->seek(sectPolygons.arrayOffset + (sectPolygons.arrayModulo * element));
-
-      if (sectPolygons.arrayModulo == 5)
-      {
-        in >> t16_1 >> t16_2 >> t8;
-        offset = t16_2 | (t8 << 16);
-      }
-      else if (sectPolygons.arrayModulo == 4)
-      {
-        in >> t16_1 >> t16_2;
-        offset = t16_2;
-      }
-      else if (sectPolygons.arrayModulo == 3)
-      {
-        in >> t16_1 >> t8;
-        offset = t8;
-      }
-
-      t16_2 = (t16_1 >> 5) | ((t16_1 & 0x1f) << 11);
-      typ = t16_2 & 0x7F;
-      subtyp = t16_1 & 0x1F;
-
-      if (t16_1 & 0x2000)
-      {
-        typ = 0x10000 | (typ << 8) | subtyp;
-      }
-
-      in.device()->seek(sectPolygons.dataOffset + offset);
-      in >> t8;
-      hasLocalization = t8 & 0x10;
-      hasTextColor = t8 & 0x20;
-      ctyp = t8 & 0x0F;
-
-#ifdef DBG
-      qDebug() << "Polygon typ:" << Qt::hex << typ << "ctype:" << ctyp << "offset:" << (sectPolygons.dataOffset + offset) << "orig data:" << t16_1;
-#endif
-
-      polygon_property &property = polygons[typ];
-
-      switch (ctyp)
-      {
-      case 0x01:
-      {
-        // day & night single color
-        in >> b >> g >> r;
-        property.brushDay = QBrush(qRgb(r, g, b));
-        in >> b >> g >> r;
-        property.brushNight = QBrush(qRgb(r, g, b));
-
-        // night and day color for line?
-        in >> b >> g >> r;
-        property.pen = QPen(QBrush(qRgb(r, g, b)), 2);
-        in >> b >> g >> r;
-        property.known = true;
-
-        break;
-      }
-
-      case 0x06:
-      {
-        // day & night single color
-        in >> b >> g >> r;
-        property.brushDay = QBrush(qRgb(r, g, b));
-        property.brushNight = QBrush(qRgb(r, g, b));
-        property.pen = Qt::NoPen;
-        property.known = true;
-
-        break;
-      }
-
-      case 0x07:
-      {
-        // day single color & night single color
-        in >> b >> g >> r;
-        property.brushDay = QBrush(qRgb(r, g, b));
-        in >> b >> g >> r;
-        property.brushNight = QBrush(qRgb(r, g, b));
-        property.pen = Qt::NoPen;
-        property.known = true;
-
-        break;
-      }
-
-      case 0x08:
-      {
-        // day & night two color
-        xpmDay.setColorCount(2);
-
-        in >> b >> g >> r;
-        xpmDay.setColor(1, qRgb(r, g, b));
-        in >> b >> g >> r;
-        xpmDay.setColor(0, qRgb(r, g, b));
-
-        decodeBitmap(in, xpmDay, 32, 32, 1);
-        property.brushDay.setTextureImage(xpmDay);
-        property.brushNight.setTextureImage(xpmDay);
-        property.pen = Qt::NoPen;
-        property.known = true;
-        break;
-      }
-
-      case 0x09:
-      {
-        // day two color & night two color
-        xpmDay.setColorCount(2);
-        xpmNight.setColorCount(2);
-        in >> b >> g >> r;
-        xpmDay.setColor(1, qRgb(r, g, b));
-        in >> b >> g >> r;
-        xpmDay.setColor(0, qRgb(r, g, b));
-        in >> b >> g >> r;
-        xpmNight.setColor(1, qRgb(r, g, b));
-        in >> b >> g >> r;
-        xpmNight.setColor(0, qRgb(r, g, b));
-
-        decodeBitmap(in, xpmDay, 32, 32, 1);
-        memcpy(xpmNight.bits(), xpmDay.bits(), (32 * 32));
-        property.brushDay.setTextureImage(xpmDay);
-        property.brushNight.setTextureImage(xpmNight);
-        property.pen = Qt::NoPen;
-        property.known = true;
-
-        break;
-      }
-
-      case 0x0B:
-      {
-        // day one color, transparent & night two color
-        xpmDay.setColorCount(2);
-        xpmNight.setColorCount(2);
-        in >> b >> g >> r;
-        xpmDay.setColor(1, qRgb(r, g, b));
-        xpmDay.setColor(0, qRgba(255, 255, 255, 0));
-
-        in >> b >> g >> r;
-        xpmNight.setColor(1, qRgb(r, g, b));
-        in >> b >> g >> r;
-        xpmNight.setColor(0, qRgb(r, g, b));
-
-        decodeBitmap(in, xpmDay, 32, 32, 1);
-        memcpy(xpmNight.bits(), xpmDay.bits(), (32 * 32));
-        property.brushDay.setTextureImage(xpmDay);
-        property.brushNight.setTextureImage(xpmNight);
-        property.pen = Qt::NoPen;
-        property.known = true;
-        break;
-      }
-
-      case 0x0D:
-      {
-        // day two color & night one color, transparent
-
-        xpmDay.setColorCount(2);
-        xpmNight.setColorCount(2);
-        in >> b >> g >> r;
-        xpmDay.setColor(1, qRgb(r, g, b));
-        in >> b >> g >> r;
-        xpmDay.setColor(0, qRgb(r, g, b));
-
-        in >> b >> g >> r;
-        xpmNight.setColor(1, qRgb(r, g, b));
-        xpmNight.setColor(0, qRgba(255, 255, 255, 0));
-
-        decodeBitmap(in, xpmDay, 32, 32, 1);
-        memcpy(xpmNight.bits(), xpmDay.bits(), (32 * 32));
-        property.brushDay.setTextureImage(xpmDay);
-        property.brushNight.setTextureImage(xpmNight);
-        property.pen = Qt::NoPen;
-        property.known = true;
-
-        break;
-      }
-
-      case 0x0E:
-      {
-        // day & night one color, transparent
-        xpmDay.setColorCount(2);
-        in >> b >> g >> r;
-        xpmDay.setColor(1, qRgb(r, g, b));
-        xpmDay.setColor(0, qRgba(255, 255, 255, 0));
-
-        decodeBitmap(in, xpmDay, 32, 32, 1);
-        property.brushDay.setTextureImage(xpmDay);
-        property.brushNight.setTextureImage(xpmDay);
-        property.pen = Qt::NoPen;
-        property.known = true;
-
-        break;
-      }
-
-      case 0x0F:
-      {
-        // day one color, transparent & night one color, transparent
-        xpmDay.setColorCount(2);
-        xpmNight.setColorCount(2);
-        in >> b >> g >> r;
-        xpmDay.setColor(1, qRgb(r, g, b));
-        xpmDay.setColor(0, qRgba(255, 255, 255, 0));
-
-        in >> b >> g >> r;
-        xpmNight.setColor(1, qRgb(r, g, b));
-        xpmNight.setColor(0, qRgba(255, 255, 255, 0));
-
-        decodeBitmap(in, xpmDay, 32, 32, 1);
-        memcpy(xpmNight.bits(), xpmDay.bits(), (32 * 32));
-        property.brushDay.setTextureImage(xpmDay);
-        property.brushNight.setTextureImage(xpmNight);
-        property.pen = Qt::NoPen;
-        property.known = true;
-
-        break;
-      }
-
-      default:
-        if (!tainted)
-        {
-          // QMessageBox::warning(CMainWindow::getBestWidgetForParent(), tr("Warning..."),
-          //                      tr("This is a typ file with unknown polygon encoding. Please report!"),
-          //                      QMessageBox::Abort, QMessageBox::Abort);
-          tainted = true;
-        }
-        qDebug() << "Failed polygon:" << typ << subtyp << Qt::hex << typ << subtyp << ctyp;
-      }
-
-      if (hasLocalization)
-      {
-        qint16 len;
-        quint8 n = 1;
-
-        in >> t8;
-        len = t8;
-
-        if (!(t8 & 0x01))
-        {
-          n = 2;
-          in >> t8;
-          len |= t8 << 8;
-        }
-
-        len -= n;
-        while (len > 0)
-        {
-          QByteArray str;
-          in >> langcode;
-          languages << langcode;
-          len -= 2 * n;
-          while (len > 0)
-          {
-            in >> t8;
-            len -= 2 * n;
-
-            if (t8 == 0)
-            {
-              break;
-            }
-
-            str += t8;
-          }
-          if (codec != nullptr)
-          {
-            property.strings[langcode] = codec->toUnicode(str);
-          }
-#ifdef DBG
-          qDebug() << len << langcode << property.strings[langcode];
-#endif
-        }
-      }
-
-      if (hasTextColor)
-      {
-        in >> t8;
-        property.labelType = (label_type_e)(t8 & 0x07);
-
-        if (t8 & 0x08)
-        {
-          in >> b >> g >> r;
-          property.colorLabelDay = qRgb(r, g, b);
-        }
-
-        if (t8 & 0x10)
-        {
-          in >> b >> g >> r;
-          property.colorLabelNight = qRgb(r, g, b);
-        }
-#ifdef DBG
-        qDebug() << "ext. label: type" << property.labelType << "day" << property.colorLabelDay << "night"
-                 << property.colorLabelNight;
-#endif
-      }
-    }
-
-    return true;
-  }
-
-  virtual bool parsePolyline(QDataStream &in, QMap<quint32, polyline_property> &polylines)
-  {
-    bool tainted = false;
-
-    if (sectPolylines.arraySize == 0)
-    {
-      return true;
-    }
-
-    if (!sectPolylines.arrayModulo || ((sectPolylines.arraySize % sectPolylines.arrayModulo) != 0))
-    {
-      return true;
-    }
-
-    QTextCodec *codec = getCodec(codepage);
-
-    const int N = sectPolylines.arraySize / sectPolylines.arrayModulo;
-    for (int element = 0; element < N; element++)
-    {
-      quint16 t16_1 = 0, t16_2, subtyp;
-      quint8 t8_1, t8_2;
-      quint32 typ, offset = 0;
-      bool hasLocalization = false;
-      bool hasTextColor = false;
-      // bool renderMode = false;
-      quint8 ctyp, rows;
-      quint8 r, g, b;
-      quint8 langcode;
-
-      in.device()->seek(sectPolylines.arrayOffset + (sectPolylines.arrayModulo * element));
-
-      if (sectPolylines.arrayModulo == 5)
-      {
-        in >> t16_1 >> t16_2 >> t8_1;
-        offset = t16_2 | (t8_1 << 16);
-      }
-      else if (sectPolylines.arrayModulo == 4)
-      {
-        in >> t16_1 >> t16_2;
-        offset = t16_2;
-      }
-      else if (sectPolylines.arrayModulo == 3)
-      {
-        in >> t16_1 >> t8_1;
-        offset = t8_1;
-      }
-
-      t16_2 = (t16_1 >> 5) | ((t16_1 & 0x1f) << 11);
-      typ = t16_2 & 0x7F;
-      subtyp = t16_1 & 0x1F;
-
-      if (t16_1 & 0x2000)
-      {
-        typ = 0x10000 | (typ << 8) | subtyp;
-      }
-
-      in.device()->seek(sectPolylines.dataOffset + offset);
-      in >> t8_1 >> t8_2;
-      ctyp = t8_1 & 0x07;
-      rows = t8_1 >> 3;
-
-      hasLocalization = t8_2 & 0x01;
-      // renderMode      = t8_2 & 0x02;
-      hasTextColor = t8_2 & 0x04;
-
-#ifdef DBG
-      qDebug() << "Polyline typ:" << Qt::hex << typ << "ctyp:" << ctyp << "offset:" << (sectPolylines.dataOffset + offset)
-               << "orig data:" << t16_1;
-#endif
-
-      polyline_property &property = polylines[typ];
-#ifdef DBG
-      qDebug() << "rows" << rows << "t8_2" << Qt::hex << t8_2;
-#endif
-
-      switch (ctyp)
-      {
-      case 0x00:
-      {
-        if (rows)
-        {
-          QImage xpm(32, rows, QImage::Format_Indexed8);
-          in >> b >> g >> r;
-          xpm.setColor(1, qRgb(r, g, b));
-          in >> b >> g >> r;
-          xpm.setColor(0, qRgb(r, g, b));
-          decodeBitmap(in, xpm, 32, rows, 1);
-          property.imgDay = xpm;
-          property.imgNight = xpm;
-          property.hasPixmap = true;
-          property.known = true;
-        }
-        else
-        {
-          quint8 w1, w2;
-          in >> b >> g >> r;
-          property.penLineDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          property.penLineNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> b >> g >> r;
-          property.penBorderDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          property.penBorderNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> w1 >> w2;
-          property.penLineDay.setWidth(w1);
-          property.penLineNight.setWidth(w1);
-          property.penBorderDay.setWidth(w2);
-          property.penBorderNight.setWidth(w2);
-          property.hasBorder = w2 > w1;
-          property.hasPixmap = false;
-          property.known = true;
-        }
-
-        break;
-      }
-
-      case 0x01:
-      {
-        if (rows)
-        {
-          QImage xpm1(32, rows, QImage::Format_Indexed8);
-          QImage xpm2(32, rows, QImage::Format_Indexed8);
-          in >> b >> g >> r;
-          xpm1.setColor(1, qRgb(r, g, b));
-          in >> b >> g >> r;
-          xpm1.setColor(0, qRgb(r, g, b));
-          in >> b >> g >> r;
-          xpm2.setColor(1, qRgb(r, g, b));
-          in >> b >> g >> r;
-          xpm2.setColor(0, qRgb(r, g, b));
-          decodeBitmap(in, xpm1, 32, rows, 1);
-          memcpy(xpm2.bits(), xpm1.bits(), (32 * rows));
-          property.imgDay = xpm1;
-          property.imgNight = xpm2;
-          property.hasPixmap = true;
-          property.known = true;
-        }
-        else
-        {
-          quint8 w1, w2;
-          in >> b >> g >> r;
-          property.penLineDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> b >> g >> r;
-          property.penBorderDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> b >> g >> r;
-          property.penLineNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> b >> g >> r;
-          property.penBorderNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> w1 >> w2;
-          property.penLineDay.setWidth(w1);
-          property.penLineNight.setWidth(w1);
-          property.penBorderDay.setWidth(w2);
-          property.penBorderNight.setWidth(w2);
-          property.hasBorder = w2 > w1;
-          property.hasPixmap = false;
-          property.known = true;
-        }
-        break;
-      }
-
-      case 0x03:
-      {
-        if (rows)
-        {
-          QImage xpm1(32, rows, QImage::Format_Indexed8);
-          QImage xpm2(32, rows, QImage::Format_Indexed8);
-          in >> b >> g >> r;
-          xpm1.setColor(1, qRgb(r, g, b));
-          xpm1.setColor(0, qRgba(255, 255, 255, 0));
-          in >> b >> g >> r;
-          xpm2.setColor(1, qRgb(r, g, b));
-          in >> b >> g >> r;
-          xpm2.setColor(0, qRgb(r, g, b));
-          decodeBitmap(in, xpm1, 32, rows, 1);
-          memcpy(xpm2.bits(), xpm1.bits(), (32 * rows));
-          property.imgDay = xpm1;
-          property.imgNight = xpm2;
-          property.hasPixmap = true;
-          property.known = true;
-        }
-        else
-        {
-          quint8 w1, w2;
-          in >> b >> g >> r;
-          property.penLineDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          property.penBorderDay = QPen(Qt::NoPen);
-          in >> b >> g >> r;
-          property.penLineNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> b >> g >> r;
-          property.penBorderNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> w1 >> w2;
-          property.penLineDay.setWidth(w1);
-          property.penLineNight.setWidth(w1);
-          property.penBorderDay.setWidth(w2);
-          property.penBorderNight.setWidth(w2);
-          property.hasBorder = w2 > w1;
-          property.hasPixmap = false;
-          property.known = true;
-        }
-
-        break;
-      }
-
-      case 0x05:
-      {
-        if (rows)
-        {
-          QImage xpm1(32, rows, QImage::Format_Indexed8);
-          QImage xpm2(32, rows, QImage::Format_Indexed8);
-          in >> b >> g >> r;
-          xpm1.setColor(1, qRgb(r, g, b));
-          in >> b >> g >> r;
-          xpm1.setColor(0, qRgb(r, g, b));
-          in >> b >> g >> r;
-          xpm2.setColor(1, qRgb(r, g, b));
-          xpm2.setColor(0, qRgba(255, 255, 255, 0));
-          decodeBitmap(in, xpm1, 32, rows, 1);
-          memcpy(xpm2.bits(), xpm1.bits(), (32 * rows));
-          property.imgDay = xpm1;
-          property.imgNight = xpm2;
-          property.hasPixmap = true;
-          property.known = true;
-        }
-        else
-        {
-          quint8 w1;
-          in >> b >> g >> r;
-          property.penLineDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> b >> g >> r;
-          property.penBorderDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          in >> b >> g >> r;
-          property.penLineNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          property.penBorderNight = QPen(Qt::NoPen);
-          in >> w1;
-          property.penLineDay.setWidth(w1);
-          property.penLineNight.setWidth(w1);
-          property.hasBorder = false;
-          property.hasPixmap = false;
-          property.known = true;
-        }
-        break;
-      }
-
-      case 0x06:
-      {
-        if (rows)
-        {
-          QImage xpm(32, rows, QImage::Format_Indexed8);
-          in >> b >> g >> r;
-          xpm.setColor(1, qRgb(r, g, b));
-          xpm.setColor(0, qRgba(255, 255, 255, 0));
-          decodeBitmap(in, xpm, 32, rows, 1);
-          property.imgDay = xpm;
-          property.imgNight = xpm;
-          property.hasPixmap = true;
-          property.known = true;
-        }
-        else
-        {
-          quint8 w1;
-          in >> b >> g >> r;
-          property.penLineDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          property.penBorderDay = QPen(Qt::NoPen);
-          property.penLineNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          property.penBorderNight = QPen(Qt::NoPen);
-          in >> w1;
-          property.penLineDay.setWidth(w1);
-          property.penLineNight.setWidth(w1);
-          property.hasBorder = false;
-          property.hasPixmap = false;
-          property.known = true;
-        }
-        break;
-      }
-
-      case 0x07:
-      {
-        if (rows)
-        {
-          QImage xpm1(32, rows, QImage::Format_Indexed8);
-          QImage xpm2(32, rows, QImage::Format_Indexed8);
-          in >> b >> g >> r;
-          xpm1.setColor(1, qRgb(r, g, b));
-          xpm1.setColor(0, qRgba(255, 255, 255, 0));
-          in >> b >> g >> r;
-          xpm2.setColor(1, qRgb(r, g, b));
-          xpm2.setColor(0, qRgba(255, 255, 255, 0));
-          decodeBitmap(in, xpm1, 32, rows, 1);
-          memcpy(xpm2.bits(), xpm1.bits(), (32 * rows));
-          property.imgDay = xpm1;
-          property.imgNight = xpm2;
-          property.hasPixmap = true;
-          property.known = true;
-        }
-        else
-        {
-          quint8 w1;
-          in >> b >> g >> r;
-          property.penLineDay = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          property.penBorderDay = QPen(Qt::NoPen);
-          in >> b >> g >> r;
-          property.penLineNight = QPen(QBrush(qRgb(r, g, b)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-          property.penBorderNight = QPen(Qt::NoPen);
-          in >> w1;
-          property.penLineDay.setWidth(w1);
-          property.penLineNight.setWidth(w1);
-          property.hasBorder = false;
-          property.hasPixmap = false;
-          property.known = true;
-        }
-        break;
-      }
-
-      default:
-        if (!tainted)
-        {
-          // QMessageBox::warning(CMainWindow::getBestWidgetForParent(), tr("Warning..."),
-          //                      tr("This is a typ file with unknown polyline encoding. Please report!"),
-          //                      QMessageBox::Abort, QMessageBox::Abort);
-          tainted = true;
-        }
-
-        qDebug() << "Failed polyline" << Qt::hex << ":" << typ << ctyp << rows;
-        continue;
-      }
-
-      property.imgDay = property.imgDay.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-      property.imgNight = property.imgNight.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-      if (hasLocalization)
-      {
-        qint16 len;
-        quint8 n = 1;
-
-        in >> t8_1;
-        len = t8_1;
-
-        if (!(t8_1 & 0x01))
-        {
-          n = 2;
-          in >> t8_1;
-          len |= t8_1 << 8;
-        }
-
-        len -= n;
-        while (len > 0)
-        {
-          QByteArray str;
-          in >> langcode;
-          languages << langcode;
-          len -= 2 * n;
-          while (len > 0)
-          {
-            in >> t8_1;
-            len -= 2 * n;
-
-            if (t8_1 == 0)
-            {
-              break;
-            }
-
-            str += t8_1;
-          }
-          if (codec != nullptr)
-          {
-            property.strings[langcode] = codec->toUnicode(str);
-          }
-#ifdef DBG
-          qDebug() << len << langcode << property.strings[langcode];
-#endif
-        }
-      }
-
-      if (hasTextColor)
-      {
-        in >> t8_1;
-        property.labelType = (label_type_e)(t8_1 & 0x07);
-
-        if (t8_1 & 0x08)
-        {
-          in >> b >> g >> r;
-          property.colorLabelDay = qRgb(r, g, b);
-        }
-
-        if (t8_1 & 0x10)
-        {
-          in >> b >> g >> r;
-          property.colorLabelNight = qRgb(r, g, b);
-        }
-#ifdef DBG
-        qDebug() << "ext. label: type" << property.labelType << "day" << property.colorLabelDay << "night"
-                 << property.colorLabelNight;
-#endif
-      }
-
-      if (property.hasPixmap)
-      {
-        property.imgDay = property.imgDay.mirrored(false, true);
-        property.imgNight = property.imgNight.mirrored(false, true);
-      }
-    }
-    return true;
-  }
-  virtual bool parsePoint(QDataStream &in, QMap<quint32, point_property> &points)
-  {
-    //    bool tainted = false;
-
-    if (!sectPoints.arrayModulo || ((sectPoints.arraySize % sectPoints.arrayModulo) != 0))
-    {
-      return true;
-    }
-
-    QTextCodec *codec = getCodec(codepage);
-
-    const int N = sectPoints.arraySize / sectPoints.arrayModulo;
-    for (int element = 0; element < N; element++)
-    {
-      quint16 t16_1 = 0, t16_2, subtyp;
-      quint8 t8_1;
-      quint32 typ, offset = 0;
-      bool hasLocalization = false;
-      bool hasTextColor = false;
-      quint8 langcode;
-      quint8 r, g, b;
-
-      in.device()->seek(sectPoints.arrayOffset + (sectPoints.arrayModulo * element));
-
-      if (sectPoints.arrayModulo == 5)
-      {
-        in >> t16_1 >> t16_2 >> t8_1;
-        offset = t16_2 | (t8_1 << 16);
-      }
-      else if (sectPoints.arrayModulo == 4)
-      {
-        in >> t16_1 >> t16_2;
-        offset = t16_2;
-      }
-      else if (sectPoints.arrayModulo == 3)
-      {
-        in >> t16_1 >> t8_1;
-        offset = t8_1;
-      }
-
-      t16_2 = (t16_1 >> 5) | ((t16_1 & 0x1f) << 11);
-      typ = t16_2 & 0x7FF;
-      subtyp = t16_1 & 0x01F;
-
-      if (t16_1 & 0x2000)
-      {
-        typ = 0x10000 | (typ << 8) | subtyp;
-      }
-      else
-      {
-        typ = (typ << 8) + subtyp;
-      }
-
-      in.device()->seek(sectPoints.dataOffset + offset);
-
-      int bpp = 0, wbytes = 0;
-      quint8 w, h, ncolors, ctyp;
-      in >> t8_1 >> w >> h >> ncolors >> ctyp;
-
-      hasLocalization = t8_1 & 0x04;
-      hasTextColor = t8_1 & 0x08;
-      t8_1 = t8_1 & 0x03;
-#ifdef DBG
-      qDebug() << "Point typ:" << Qt::hex << typ << "ctyp:" << ctyp << "offset:" << (sectPoints.dataOffset + offset)
-               << "orig data:" << t16_1;
-#endif
-
-      if (!decodeBppAndBytes(ncolors, w, ctyp, bpp, wbytes))
-      {
-        continue;
-      }
-
-#ifdef DBG
-      qDebug() << "          " << "w" << w << "h" << h << "ncolors" << ncolors << "bpp" << bpp << "wbytes"
-               << wbytes;
-#endif
-
-      if (ctyp == 0x20 || ctyp == 0x00)
-      {
-        if ((ncolors == 0) && (bpp >= 16))
-        {
-          ncolors = w * h;
-        }
-      }
-
-      point_property &property = points[typ];
-      QImage imgDay(w, h, QImage::Format_Indexed8);
-      QImage imgNight(w, h, QImage::Format_Indexed8);
-
-      if (!decodeColorTable(in, imgDay, ncolors, 1 << bpp, ctyp == 0x20))
-      {
-        continue;
-      }
-
-      if (bpp >= 16)
-      {
-        continue;
-      }
-      else
-      {
-        decodeBitmap(in, imgDay, w, h, bpp);
-        property.imgDay = imgDay;
-      }
-
-      if (t8_1 == 0x03)
-      {
-        in >> ncolors >> ctyp;
-        if (!decodeBppAndBytes(ncolors, w, ctyp, bpp, wbytes))
-        {
-          continue;
-        }
-        if (!decodeColorTable(in, imgNight, ncolors, 1 << bpp, ctyp == 0x20))
-        {
-          continue;
-        }
-        decodeBitmap(in, imgNight, w, h, bpp);
-        points[typ].imgNight = imgNight;
-      }
-      else if (t8_1 == 0x02)
-      {
-        in >> ncolors >> ctyp;
-        if (!decodeBppAndBytes(ncolors, w, ctyp, bpp, wbytes))
-        {
-          continue;
-        }
-        if (!decodeColorTable(in, imgDay, ncolors, 1 << bpp, ctyp == 0x20))
-        {
-          continue;
-        }
-        property.imgNight = imgDay;
-      }
-      else
-      {
-        property.imgNight = imgDay;
-      }
-
-      if (hasLocalization)
-      {
-        qint16 len;
-        quint8 n = 1;
-
-        in >> t8_1;
-        len = t8_1;
-
-        if (!(t8_1 & 0x01))
-        {
-          n = 2;
-          in >> t8_1;
-          len |= t8_1 << 8;
-        }
-
-        len -= n;
-        while (len > 0)
-        {
-          QByteArray str;
-          in >> langcode;
-          languages << langcode;
-          len -= 2 * n;
-          while (len > 0)
-          {
-            in >> t8_1;
-            len -= 2 * n;
-
-            if (t8_1 == 0)
-            {
-              break;
-            }
-
-            str += t8_1;
-          }
-          if (codec != nullptr)
-          {
-            property.strings[langcode] = codec->toUnicode(str);
-          }
-#ifdef DBG
-          qDebug() << len << langcode << property.strings[langcode];
-#endif
-        }
-      }
-
-      if (hasTextColor)
-      {
-        in >> t8_1;
-        property.labelType = (label_type_e)(t8_1 & 0x07);
-
-        if (t8_1 & 0x08)
-        {
-          in >> b >> g >> r;
-          property.colorLabelDay = qRgb(r, g, b);
-        }
-
-        if (t8_1 & 0x10)
-        {
-          in >> b >> g >> r;
-          property.colorLabelNight = qRgb(r, g, b);
-        }
-#ifdef DBG
-        qDebug() << "ext. label: type" << property.labelType << "day" << property.colorLabelDay << "night"
-                 << property.colorLabelNight;
-#endif
-      }
-    }
-
-    return true;
-  }
-
-  QTextCodec *getCodec(quint16 codepage)
-  {
-    QTextCodec *codec = QTextCodec::codecForName(QString("CP%1").arg(codepage).toLatin1());
-    if (codepage == 65001)
-    {
-      codec = QTextCodec::codecForName("UTF-8");
-    }
-
-    return codec;
-  }
-
-  void decodeBitmap(QDataStream &in, QImage &img, int w, int h, int bpp)
-  {
-    int x = 0;
-    quint8 color;
-
-    if (bpp == 0)
-    {
-      return;
-    }
-
-    for (int y = 0; y < h; y++)
-    {
-      while (x < w)
-      {
-        in >> color;
-
-        for (int i = 0; (i < (8 / bpp)) && (x < w); i++)
-        {
-          int value;
-          if (i > 0)
-          {
-            value = (color >>= bpp);
-          }
-          else
-          {
-            value = color;
-          }
-          if (bpp == 4)
-          {
-            value = value & 0xf;
-          }
-          if (bpp == 2)
-          {
-            value = value & 0x3;
-          }
-          if (bpp == 1)
-          {
-            value = value & 0x1;
-          }
-          img.setPixel(x, y, value);
-          //                 qDebug() << QString("value(%4) pixel at (%1,%2) is 0x%3 j is
-          //                 %5").arg(x).arg(y).arg(value,0,16).arg(color).arg(j);
-          x += 1;
-        }
-      }
-      x = 0;
-    }
-  }
-  bool decodeBppAndBytes(int ncolors, int w, int flags, int &bpp, int &bytes)
-  {
-    switch (flags)
-    {
-    case 0x00:
-    {
-      if (ncolors < 3)
-      {
-        bpp = ncolors;
-      }
-      else if (ncolors == 3)
-      {
-        bpp = 2;
-      }
-      else if (ncolors < 16)
-      {
-        bpp = 4;
-      }
-      else if (ncolors < 256)
-      {
-        bpp = 8;
-      }
-      else
-      {
-        return false;
-      }
-      break;
-    }
-
-    case 0x10:
-    {
-      if (ncolors == 0)
-      {
-        bpp = 1;
-      }
-      else if (ncolors < 3)
-      {
-        bpp = 2;
-      }
-      else if (ncolors < 15)
-      {
-        bpp = 4;
-      }
-      else if (ncolors < 256)
-      {
-        bpp = 8;
-      }
-      else
-      {
-        return false;
-      }
-      break;
-    }
-
-    case 0x20:
-    {
-      if (ncolors == 0)
-      {
-        bpp = 16;
-      }
-      else if (ncolors < 3)
-      {
-        bpp = ncolors;
-      }
-      else if (ncolors < 4)
-      {
-        bpp = 2;
-      }
-      else if (ncolors < 16)
-      {
-        bpp = 4;
-      }
-      else if (ncolors < 256)
-      {
-        bpp = 8;
-      }
-      else
-      {
-        return false;
-      }
-      break;
-    }
-
-    default:
-      return false;
-    }
-
-    bytes = (w * bpp) / 8;
-    if ((w * bpp) & 0x07)
-    {
-      ++bytes;
-    }
-
-    return true;
-  }
-  bool decodeColorTable(QDataStream &in, QImage &img, int ncolors, int maxcolor, bool hasAlpha)
-  {
-    img.setColorCount(ncolors);
-
-    if (hasAlpha)
-    {
-      int i;
-      quint8 byte;
-      quint32 bits = 0;
-      quint32 reg = 0;
-      quint32 mask = 0x000000FF;
-
-      for (i = 0; i < ncolors; i++)
-      {
-        while (bits < 28)
-        {
-          in >> byte;
-          mask = 0x000000FF << bits;
-          reg = reg & (~mask);
-          reg = reg | (byte << bits);
-          bits += 8;
-        }
-
-        img.setColor(i, qRgba((reg >> 16) & 0x0FF, (reg >> 8) & 0x0FF, reg & 0x0FF, ~((reg >> 24) & 0x0F) << 4));
-
-        reg = reg >> 28;
-        bits -= 28;
-      }
-      for (; i < maxcolor; ++i)
-      {
-        img.setColor(i, qRgba(0, 0, 0, 0));
-      }
-    }
-    else
-    {
-      int i;
-      quint8 r, g, b;
-      for (i = 0; i < ncolors; ++i)
-      {
-        in >> b >> g >> r;
-        img.setColor(i, qRgb(r, g, b));
-      }
-      for (; i < maxcolor; ++i)
-      {
-        img.setColor(i, qRgba(0, 0, 0, 0));
-      }
-    }
-    return true;
-  }
-
-  struct typ_section_t
-  {
-    typ_section_t() : dataOffset(0), dataLength(0), arrayOffset(0), arrayModulo(0), arraySize(0) {}
-    quint32 dataOffset;
-    quint32 dataLength;
-    quint32 arrayOffset;
-    quint16 arrayModulo;
-    quint32 arraySize;
-  };
-
-  quint16 version = 0;
-  quint16 codepage = 0;
-  quint16 year = 0;
-  quint8 month = 0;
-  quint8 day = 0;
-  quint8 hour = 0;
-  quint8 minutes = 0;
-  quint8 seconds = 0;
-
-  quint16 fid = 0;
-  quint16 pid = 0;
-
-  typ_section_t sectPoints;
-  typ_section_t sectPolylines;
-  typ_section_t sectPolygons;
-  typ_section_t sectOrder;
-
-  QSet<quint8> languages;
-};
-
-typedef QVector<CGarminPolygon> polytype_t;
-typedef QVector<CGarminPoint> pointtype_t;
-
-inline int CFileExt::cnt = 0;
-
 class CMap : public QCoreApplication
 {
 public:
   explicit CMap(int &argc, char **argv) : QCoreApplication(argc, argv)
   {
-    // eFeatVisibility | eFeatVectorItems | eFeatTypFile filename = "";
-    qDebug() << "IMG: try to open:" << filename;
+    QCommandLineParser parser;
+    parser.setApplicationDescription("qgimp 1.0");
+    parser.addHelpOption();
+
+    // Добавяне на опции
+    QCommandLineOption inputOption(QStringList() << "i" << "input", ".img input file", "input_file.img");
+    QCommandLineOption outputOption(QStringList() << "o" << "output", ".mp output file", "output_file.mp");
+    parser.addOption(inputOption);
+    parser.addOption(outputOption);
+    parser.process(this->arguments());
+
+    if (!parser.isSet(inputOption))
+    {
+      qCritical() << "Option -i is required!";
+      parser.showHelp(1);
+    }
+    else
+    {
+      inputFile = parser.value("input");
+      QFileInfo inputFileInfo(inputFile);
+
+      if (!inputFileInfo.exists())
+      {
+        qCritical() << "Грешка: Входният файл не съществува:" << inputFile;
+        exit(1);
+      }
+
+      if (!inputFileInfo.isReadable())
+      {
+        qCritical() << "Грешка: Няма права за четене на файла:" << inputFile;
+        exit(1);
+      }
+    }
+
+    if (!parser.isSet(outputOption))
+    {
+      qCritical() << "Option -o is required!";
+      parser.showHelp(1);
+    }
+    else
+    {
+      outputFile = parser.value("output");
+      QFileInfo outputFileInfo(outputFile);
+
+      if (outputFileInfo.exists())
+      {
+        // Генериране на timestamp
+        QDateTime lastModified = outputFileInfo.lastModified();
+        QString timestamp = lastModified.toString("_yyyyMMdd_hhmmss");
+        QString baseName = outputFileInfo.completeBaseName();
+        QString suffix = outputFileInfo.suffix();
+        QString dir = outputFileInfo.path();
+
+        QString renamedFile = dir + "/" + baseName + timestamp + "." + suffix;
+
+        // Преименуване на съществуващия файл
+        QFile::rename(outputFile, renamedFile);
+        qWarning() << "Съществуващият файл беше преименуван на:" << renamedFile;
+      }
+    }
+
+    of.setFileName(outputFile);
+    if (!of.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+      qCritical() << "Грешка при отваряне на изходен файл:" << of.errorString();
+      exit(1);
+    }
+
+    outStream.setDevice(&of);
+    if (!outStream.device())
+    {
+      qCritical() << "Stream has no device!";
+      return;
+    }
 
     try
     {
       readBasics();
       processPrimaryMapData();
+      printHeader();
 
       // quint8 bits = scale2bits(bufferScale);
       quint8 bits = 23;
 
       QVector<map_level_t>::const_iterator maplevel = maplevels.constEnd();
+      // qDebug() << "MAP LEVELS:" << maplevel;
+
       do
       {
         --maplevel;
@@ -2832,32 +1236,34 @@ public:
         }
       } while (maplevel != maplevels.constBegin());
 
-      loadVisibleData(false, polygons, polylines, points, pois, maplevel->level);
+      // qApp->quit();
+
+      loadData(polygons, polylines, points, pois, maplevel->level);
     }
     catch (const exce_t &e)
     {
       qDebug() << "Fatal error:" << e.msg;
     }
   }
-
   virtual ~CMap()
   {
+    if (of.isOpen())
+    {
+      outStream.flush();
+      of.close();
+    }
     qDebug() << "✅ Done.";
   }
+
+private:
+  typedef QVector<CGarminPolygon> polytype_t;
+  typedef QVector<CGarminPoint> pointtype_t;
 
   struct maplevel_t
   {
     bool inherited;
     quint8 level;
     quint8 bits;
-  };
-  enum features_e
-  {
-    eFeatVisibility = 0x00000001,
-    eFeatVectorItems = 0x00000002,
-    eFeatTileCache = 0x00000004,
-    eFeatLayers = 0x00000008,
-    eFeatTypFile = 0x00000010
   };
 
   /// subfile part (TRE, RGN, ...) location information
@@ -3196,390 +1602,75 @@ public:
     static bool GreaterThan(const map_level_t &ml1, const map_level_t &ml2) { return ml1.bits < ml2.bits; }
   };
 
-private:
-  void addLabel(const CGarminPoint &pt, const QRect &rect, const CGarminTyp::point_property &property, bool isNight)
+  enum exce_e
   {
-    QString str;
-    if (pt.hasLabel())
+    eErrOpen,
+    eErrAccess,
+    errFormat,
+    errLock,
+    errAbort
+  };
+
+  struct exce_t
+  {
+    exce_t(exce_e err, const QString &msg) : err(err), msg(msg) {}
+    exce_e err;
+    QString msg;
+  };
+
+  QString copyright; //< a copyright string to be displayed as tool tip
+  QString inputFile = "";
+  QString outputFile = "";
+  QFile of;
+  QTextStream outStream;
+  quint8 mask;
+  quint32 mask32;
+  quint64 mask64;
+  QString mapdesc;
+  QMap<QString, subfile_desc_t> subfiles; // hold all subfile descriptors: In a normal *.img file there is only one subfile. However gmapsupp.img files can hold several subfiles each with it's own subfile parts.
+  QRectF maparea;
+  QVector<map_level_t> maplevels; // combined maplevels of all tiles
+  polytype_t polygons;
+  polytype_t polylines;
+  pointtype_t points;
+  pointtype_t pois;
+  QSet<QString> copyrights;
+  QString mCodePage = "";
+  QString mCoding = "";
+
+  QString
+  convPolyToDegStr(const QPolygonF &polygon)
+  {
+    QString result;
+    const double radToDeg = 180.0 / M_PI;
+
+    for (const QPointF &point : polygon)
     {
-      str = pt.getLabelText();
+      // Конвертиране от радиани в градуси
+      double lon = point.x() * radToDeg;
+      double lat = point.y() * radToDeg;
+
+      // Форматиране с 5 знака след десетичната запетая
+      QString pointStr = QString("(%1,%2)").arg(lat, 0, 'f', 5).arg(lon, 0, 'f', 5);
+
+      // Добавяне към резултата (с запетая между точките)
+      if (!result.isEmpty())
+      {
+        result += ",";
+      }
+      result += pointStr;
     }
 
-    labels.push_back(strlbl_t());
-    strlbl_t &strlbl = labels.last();
-    strlbl.pt = pt.pos.toPoint();
-    strlbl.str = str;
-    strlbl.rect = rect;
-    strlbl.property = property;
-    strlbl.isNight = isNight;
+    return result;
   }
 
-  void collectText(const CGarminPolygon &item, const QPolygonF &line, const QFont &font, qint32 lineWidth, const QColor &color)
+  void writeStream(const QString &data)
   {
-    QString str;
-    if (item.hasLabel())
-    {
-      str = item.getLabelText();
-    }
-
-    if (str.isEmpty())
-    {
-      return;
-    }
-
-    textpath_t tp;
-    tp.polyline = line;
-    // tp.font = font;
-    tp.text = str;
-    tp.lineWidth = lineWidth;
-    tp.color = color;
-
-    const int size = line.size();
-    for (int i = 1; i < size; ++i)
-    {
-      const QPointF &p1 = line[i - 1];
-      const QPointF &p2 = line[i];
-      qreal dx = p2.x() - p1.x();
-      qreal dy = p2.y() - p1.y();
-      tp.lengths << qSqrt(dx * dx + dy * dy);
-    }
-
-    textpaths << tp;
+    outStream << data;
+    outStream.flush();
   }
 
-  void getInfoPoints(const pointtype_t &points, const QPoint &pt, QMultiMap<QString, QString> &dict) const
-  {
-    for (const CGarminPoint &point : points)
-    {
-      QPoint x = pt - QPoint(point.pos.x(), point.pos.y());
-      if (x.manhattanLength() < 10)
-      {
-        if (point.hasLabel())
-        {
-          dict.insert(tr("Point of Interest"), point.getLabelText());
-        }
-        else
-        {
-          if (pointProperties.contains(point.type))
-          {
-            dict.insert(tr("Point of Interest"),
-                        pointProperties[point.type].strings[selectedLanguage != NOIDX ? selectedLanguage : 0]);
-          }
-          else
-          {
-            dict.insert(tr("Point of Interest"), QString(" (%1)").arg(point.type, 2, 16, QChar('0')));
-          }
-        }
-      }
-    }
-  }
-
-  void getInfoPolylines(const QPoint &pt, QMultiMap<QString, QString> &dict) const
-  {
-    PJ_UV p1, p2;        // the two points of the polyline close to pt
-    qreal u;             // ratio u the tangent point will divide d_p1_p2
-    qreal shortest = 20; // shortest distance so far
-
-    QPointF resPt = pt;
-    QString key;
-    QStringList value;
-    quint32 type = 0;
-
-    bool found = false;
-
-    for (const CGarminPolygon &line : polylines)
-    {
-      int len = line.pixel.size();
-      // need at least 2 points
-      if (len < 2)
-      {
-        continue;
-      }
-
-      // see http://local.wasp.uwa.edu.au/~pbourke/geometry/pointline/
-      for (int i = 1; i < len; ++i)
-      {
-        p1.u = line.pixel[i - 1].x();
-        p1.v = line.pixel[i - 1].y();
-        p2.u = line.pixel[i].x();
-        p2.v = line.pixel[i].y();
-
-        qreal dx = p2.u - p1.u;
-        qreal dy = p2.v - p1.v;
-
-        // distance between p1 and p2
-        qreal d_p1_p2 = qSqrt(dx * dx + dy * dy);
-
-        u = ((pt.x() - p1.u) * dx + (pt.y() - p1.v) * dy) / (d_p1_p2 * d_p1_p2);
-
-        if (u < 0.0 || u > 1.0)
-        {
-          continue;
-        }
-
-        // coord. (x,y) of the point on line defined by [p1,p2] close to pt
-        qreal x = p1.u + u * dx;
-        qreal y = p1.v + u * dy;
-
-        qreal distance = qSqrt((x - pt.x()) * (x - pt.x()) + (y - pt.y()) * (y - pt.y()));
-
-        if (distance < shortest)
-        {
-          type = line.type;
-          value.clear();
-          value << (line.hasLabel() ? line.getLabelText() : "-");
-
-          resPt.setX(x);
-          resPt.setY(y);
-          shortest = distance;
-          found = true;
-        }
-        else if (distance == shortest)
-        {
-          if (line.hasLabel())
-          {
-            value << line.getLabelText();
-          }
-        }
-      }
-    }
-
-    value.removeDuplicates();
-
-    if (!found)
-    {
-      return;
-    }
-
-    if (selectedLanguage != NOIDX)
-    {
-      key = polylineProperties[type].strings[selectedLanguage];
-    }
-
-    if (!key.isEmpty())
-    {
-      dict.insert(key + QString("(%1)").arg(type, 2, 16, QChar('0')), value.join("\n"));
-    }
-    else
-    {
-      if (polylineProperties[type].strings.isEmpty())
-      {
-        dict.insert(tr("Unknown") + QString("(%1)").arg(type, 2, 16, QChar('0')), value.join("\n"));
-      }
-      else
-      {
-        dict.insert(polylineProperties[type].strings[0] + QString("(%1)").arg(type, 2, 16, QChar('0')), value.join("\n"));
-      }
-    }
-
-    //    pt = resPt.toPoint();
-  }
-
-  void getInfoPolygons(const QPoint &pt, QMultiMap<QString, QString> &dict) const
-  {
-    PJ_UV p1, p2; // the two points of the polyline close to pt
-    const qreal x = pt.x();
-    const qreal y = pt.y();
-
-    for (const CGarminPolygon &line : polygons)
-    {
-      int npol = line.pixel.size();
-      if (npol > 2)
-      {
-        bool c = false;
-        // see http://local.wasp.uwa.edu.au/~pbourke/geometry/insidepoly/
-        for (int i = 0, j = npol - 1; i < npol; j = i++)
-        {
-          p1.u = line.pixel[j].x();
-          p1.v = line.pixel[j].y();
-          p2.u = line.pixel[i].x();
-          p2.v = line.pixel[i].y();
-
-          if ((((p2.v <= y) && (y < p1.v)) || ((p1.v <= y) && (y < p2.v))) &&
-              (x < (p1.u - p2.u) * (y - p2.v) / (p1.v - p2.v) + p2.u))
-          {
-            c = !c;
-          }
-        }
-
-        if (c)
-        {
-          if (line.labels.size())
-          {
-            dict.insert(tr("Area"), line.labels.join(" ").simplified());
-          }
-          else
-          {
-            if (selectedLanguage != NOIDX)
-            {
-              if (polygonProperties[line.type].strings[selectedLanguage].size())
-              {
-                dict.insert(tr("Area"), polygonProperties[line.type].strings[selectedLanguage]);
-              }
-            }
-            else
-            {
-              if (polygonProperties[line.type].strings[0].size())
-              {
-                dict.insert(tr("Area"), polygonProperties[line.type].strings[0]);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  void drawPolylines(QPainter &p, polytype_t &lines)
-  {
-    textpaths.clear();
-
-    QVector<qreal> lengths;
-    lengths.reserve(100);
-
-    QHash<quint32, QList<quint32>> dict;
-    for (int i = 0; i < lines.count(); ++i)
-    {
-      dict[lines[i].type].push_back(i);
-    }
-
-    QMap<quint32, CGarminTyp::polyline_property>::iterator props = polylineProperties.begin();
-    QMap<quint32, CGarminTyp::polyline_property>::iterator end = polylineProperties.end();
-    for (; props != end; ++props)
-    {
-      const quint32 &type = props.key();
-      const CGarminTyp::polyline_property &property = props.value();
-
-      if (dict[type].isEmpty())
-      {
-        continue;
-      }
-
-      if (property.hasPixmap)
-      {
-        qDebug() << "";
-
-        QList<quint32>::const_iterator it = dict[type].constBegin();
-        for (; it != dict[type].constEnd(); ++it)
-        {
-          CGarminPolygon &item = lines[*it];
-          {
-            // pixmapCount++;
-
-            QPolygonF &poly = item.pixel;
-            int size = poly.size();
-
-            if (size < 2)
-            {
-              continue;
-            }
-
-            // map->convertRad2Px(poly);
-
-            lengths.resize(0);
-
-            lengths.reserve(size);
-
-            // QPainterPath path;
-            qreal totalLength = 0;
-
-            qreal u1 = poly[0].x();
-            qreal v1 = poly[0].y();
-
-            for (int i = 1; i < size; ++i)
-            {
-              qreal u2 = poly[i].x();
-              qreal v2 = poly[i].y();
-
-              qreal segLength = qSqrt((u2 - u1) * (u2 - u1) + (v2 - v1) * (v2 - v1));
-              totalLength += segLength;
-              lengths << segLength;
-
-              u1 = u2;
-              v1 = v2;
-            }
-
-            if (property.labelType != CGarminTyp::eNone)
-            {
-              // collectText(item, poly, f, h,
-              //             CMainWindow::self().isNight() ? property.colorLabelNight : property.colorLabelDay);
-            }
-
-            // path.addPolygon(poly);
-            const int nLength = lengths.count();
-
-            qreal curLength = 0;
-            // QPointF p2 = path.pointAtPercent(curLength / totalLength);
-            for (int i = 0; i < nLength; ++i)
-            {
-              qreal segLength = lengths.at(i);
-
-              //                         qDebug() << curLength << totalLength << curLength / totalLength;
-
-              // QPointF p1 = p2;
-              // p2 = path.pointAtPercent((curLength + segLength) / totalLength);
-              // qreal angle = qAtan((p2.y() - p1.y()) / (p2.x() - p1.x())) * 180 / M_PI;
-
-              // if (p2.x() - p1.x() < 0)
-              // {
-              //   angle += 180;
-              // }
-
-              curLength += segLength;
-            }
-          }
-        }
-      }
-      else
-      {
-        if (property.hasBorder)
-        {
-          // draw background line 1st
-          // p.setPen(CMainWindow::self().isNight() ? property.penBorderNight : property.penBorderDay);
-
-          QList<quint32>::const_iterator it = dict[type].constBegin();
-          for (; it != dict[type].constEnd(); ++it)
-          {
-            // drawLine(p, lines[*it], property);
-          }
-          // draw foreground line in a second run for nicer borders
-        }
-        else
-        {
-          // p.setPen(CMainWindow::self().isNight() ? property.penLineNight : property.penLineDay);
-
-          QList<quint32>::const_iterator it = dict[type].constBegin();
-          for (; it != dict[type].constEnd(); ++it)
-          {
-            // drawLine(p, lines[*it], property);
-          }
-        }
-      }
-    }
-
-    // 2nd run to draw foreground lines.
-    props = polylineProperties.begin();
-    for (; props != end; ++props)
-    {
-      const quint32 &type = props.key();
-      const CGarminTyp::polyline_property &property = props.value();
-
-      if (dict[type].isEmpty())
-      {
-        continue;
-      }
-
-      if (property.hasBorder && !property.hasPixmap)
-      {
-        QList<quint32>::const_iterator it = dict[type].constBegin();
-        for (; it != dict[type].constEnd(); ++it)
-        {
-          // qDebug() << p << lines[*it];
-        }
-      }
-    }
-  }
-  void loadVisibleData(bool fast, polytype_t &polygons, polytype_t &polylines, pointtype_t &points, pointtype_t &pois, unsigned level)
+  void loadData(polytype_t &polygons, polytype_t &polylines, pointtype_t &points, pointtype_t &pois, unsigned level)
   {
     // qDebug() << "level:" << level;
     // if (level != 0)
@@ -3591,7 +1682,7 @@ private:
       qDebug() << "-------";
       qDebug() << (subfile.area.topLeft() * RAD_TO_DEG) << (subfile.area.bottomRight() * RAD_TO_DEG);
 
-      CFileExt file(filename);
+      CFileExt file(inputFile);
       if (!file.open(QIODevice::ReadOnly))
       {
         return;
@@ -3605,14 +1696,14 @@ private:
       const QVector<subdiv_desc_t> &subdivs = subfile.subdivs;
       for (const subdiv_desc_t &subdiv : subdivs)
       {
-        loadSubDiv(file, subdiv, subfile.strtbl, rgndata, fast, polylines, polygons, points, pois);
+        loadSubDiv(file, subdiv, subfile.strtbl, rgndata, polylines, polygons, points, pois);
       }
 
       file.close();
     }
   }
 
-  void loadSubDiv(CFileExt &file, const subdiv_desc_t &subdiv, IGarminStrTbl *strtbl, const QByteArray &rgndata, bool fast, polytype_t &polylines, polytype_t &polygons, pointtype_t &points, pointtype_t &pois)
+  void loadSubDiv(CFileExt &file, const subdiv_desc_t &subdiv, IGarminStrTbl *strtbl, const QByteArray &rgndata, polytype_t &polylines, polytype_t &polygons, pointtype_t &points, pointtype_t &pois)
   {
     if (subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 &&
         !subdiv.lengthPoints2)
@@ -3665,6 +1756,21 @@ private:
       }
     }
 
+    // test for polygons
+    if (subdiv.hasPolygons)
+    {
+      if (opnt || oidx || opline)
+      {
+        opgon = gar_load(uint16_t, *pOffset);
+        opgon += subdiv.rgn_start;
+        ++pOffset;
+      }
+      else
+      {
+        opgon = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
+      }
+    }
+
 #ifdef DEBUG_SHOW_POLY_DATA_SUBDIV
     qDebug() << "--- Subdivision" << subdiv.n << "---";
     qDebug() << "address:" << Qt::hex << subdiv.rgn_start << "- " << subdiv.rgn_end;
@@ -3675,6 +1781,47 @@ private:
 #endif
 
     CGarminPolygon p;
+
+    // decode points
+    if (subdiv.hasPoints)
+    {
+      const quint8 *pData = pRawData + opnt;
+      const quint8 *pEnd = pRawData + (oidx ? oidx : opline ? opline
+                                                 : opgon    ? opgon
+                                                            : subdiv.rgn_end);
+      while (pData < pEnd)
+      {
+        CGarminPoint p;
+        pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
+
+        if (strtbl)
+        {
+          p.isLbl6 ? strtbl->get(file, p.lbl_ptr, IGarminStrTbl::poi, p.labels) : strtbl->get(file, p.lbl_ptr, IGarminStrTbl::norm, p.labels);
+        }
+
+        points.push_back(p);
+      }
+    }
+
+    // decode indexed points
+    if (subdiv.hasIdxPoints)
+    {
+      const quint8 *pData = pRawData + oidx;
+      const quint8 *pEnd = pRawData + (opline ? opline : opgon ? opgon
+                                                               : subdiv.rgn_end);
+      while (pData < pEnd)
+      {
+        CGarminPoint p;
+        pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
+
+        if (strtbl)
+        {
+          p.isLbl6 ? strtbl->get(file, p.lbl_ptr, IGarminStrTbl::poi, p.labels) : strtbl->get(file, p.lbl_ptr, IGarminStrTbl::norm, p.labels);
+        }
+
+        pois.push_back(p);
+      }
+    }
 
     // decode polylines
     if (subdiv.hasPolylines)
@@ -3700,17 +1847,58 @@ private:
       }
     }
 
+    // decode polygons
+    if (subdiv.hasPolygons)
+    {
+      CGarminPolygon::cnt = 0;
+      const quint8 *pData = pRawData + opgon;
+      const quint8 *pEnd = pRawData + subdiv.rgn_end;
+
+      while (pData < pEnd)
+      {
+        pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
+
+        if (strtbl && !p.lbl_in_NET && p.lbl_info)
+        {
+          strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
+        }
+        else if (strtbl && p.lbl_in_NET && p.lbl_info)
+        {
+          strtbl->get(file, p.lbl_info, IGarminStrTbl::net, p.labels);
+        }
+        polygons.push_back(p);
+      }
+    }
+
     qDebug() << "--- Subdivision" << subdiv.n << "---";
     qDebug() << "adress:" << Qt::hex << subdiv.rgn_start << "- " << subdiv.rgn_end;
-    // qDebug() << "polyg off: " << Qt::hex << subdiv.offsetPolygons2;
-    // qDebug() << "polyg len: " << Qt::hex << subdiv.lengthPolygons2 << subdiv.lengthPolygons2;
-    // qDebug() << "polyg end: " << Qt::hex << subdiv.lengthPolygons2 + subdiv.offsetPolygons2;
+    qDebug() << "polyg off: " << Qt::hex << subdiv.offsetPolygons2;
+    qDebug() << "polyg len: " << Qt::hex << subdiv.lengthPolygons2 << subdiv.lengthPolygons2;
+    qDebug() << "polyg end: " << Qt::hex << subdiv.lengthPolygons2 + subdiv.offsetPolygons2;
     qDebug() << "polyl off: " << Qt::hex << subdiv.offsetPolylines2;
     qDebug() << "polyl len: " << Qt::hex << subdiv.lengthPolylines2 << subdiv.lengthPolylines2;
     qDebug() << "polyl end: " << Qt::hex << subdiv.lengthPolylines2 + subdiv.offsetPolylines2;
-    // qDebug() << "point off: " << Qt::hex << subdiv.offsetPoints2;
-    // qDebug() << "point len: " << Qt::hex << subdiv.lengthPoints2 << subdiv.lengthPoints2;
-    // qDebug() << "point end: " << Qt::hex << subdiv.lengthPoints2 + subdiv.offsetPoints2;
+    qDebug() << "point off: " << Qt::hex << subdiv.offsetPoints2;
+    qDebug() << "point len: " << Qt::hex << subdiv.lengthPoints2 << subdiv.lengthPoints2;
+    qDebug() << "point end: " << Qt::hex << subdiv.lengthPoints2 + subdiv.offsetPoints2;
+
+    if (subdiv.lengthPolygons2)
+    {
+      const quint8 *pData = pRawData + subdiv.offsetPolygons2;
+      const quint8 *pEnd = pData + subdiv.lengthPolygons2;
+      while (pData < pEnd)
+      {
+        // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
+        pData += p.decode2(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
+
+        if (strtbl && !p.lbl_in_NET && p.lbl_info)
+        {
+          strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
+        }
+
+        polygons.push_back(p);
+      }
+    }
 
     if (subdiv.lengthPolylines2)
     {
@@ -3726,45 +1914,153 @@ private:
           strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
         }
 
-        qDebug() << pData;
+        // qDebug() << pData;
         polylines.push_back(p);
       }
     }
-  }
 
-  QString copyright; //< a copyright string to be displayed as tool tip
-  enum exce_e
-  {
-    eErrOpen,
-    eErrAccess,
-    errFormat,
-    errLock,
-    errAbort
-  };
-  struct exce_t
-  {
-    exce_t(exce_e err, const QString &msg) : err(err), msg(msg) {}
-    exce_e err;
-    QString msg;
-  };
-  struct strlbl_t
-  {
-    QPoint pt;
-    QRect rect;
-    QString str;
-    CGarminTyp::point_property property;
-    bool isNight = false;
-  };
+    if (subdiv.lengthPoints2)
+    {
+      const quint8 *pData = pRawData + subdiv.offsetPoints2;
+      const quint8 *pEnd = pData + subdiv.lengthPoints2;
+      while (pData < pEnd)
+      {
+        CGarminPoint p;
+        // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
+        pData += p.decode2(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData, pEnd);
+
+        if (strtbl)
+        {
+          p.isLbl6 ? strtbl->get(file, p.lbl_ptr, IGarminStrTbl::poi, p.labels) : strtbl->get(file, p.lbl_ptr, IGarminStrTbl::norm, p.labels);
+        }
+        pois.push_back(p);
+      }
+    }
+
+    // po dobre tuka da se pishe vyv faila...
+    QStringList sl = QStringList();
+
+    qDebug() << "CGarminPoint points:" << points.length();
+
+    for (const CGarminPoint &pt : points)
+    {
+      sl << "[POINT]";
+      sl << "Type=0x" + QString::number(pt.type, 16);
+
+      int i = 0;
+      if (pt.hasLabel())
+      {
+        if (pt.labels.length() == 1)
+        {
+          sl << QString("Label=%1").arg(pt.labels.at(0));
+        }
+        else
+        {
+          for (const QString &l : pt.labels)
+          {
+            sl << QString("Label%1=%2").arg(i).arg(l);
+            ++i;
+          }
+        }
+      }
+
+      sl << QString("Data0=%1").arg(convPolyToDegStr(p.coords));
+      sl << "[END]" << "\n";
+    }
+
+    qDebug() << "CGarminPoint pois:" << pois.length();
+    for (const CGarminPoint &poi : pois)
+    {
+      sl << "[POI]";
+      sl << "Type=0x" + QString::number(poi.type, 16);
+
+      int i = 0;
+      if (poi.hasLabel())
+      {
+        if (poi.labels.length() == 1)
+        {
+          sl << QString("Label=%1").arg(poi.labels.at(0));
+        }
+        else
+        {
+          for (const QString &l : poi.labels)
+          {
+            sl << QString("Label%1=%2").arg(i).arg(l);
+            ++i;
+          }
+        }
+      }
+
+      sl << QString("Data0=%1").arg(convPolyToDegStr(p.coords));
+      sl << "[END]" << "\n";
+    }
+
+    qDebug() << "CGarminPoint polylines:" << polylines.length();
+    for (const CGarminPolygon &ln : polylines)
+    {
+      sl << "[POLYLINE]";
+      sl << "Type=0x" + QString::number(ln.type, 16);
+
+      int i = 0;
+      if (ln.hasLabel())
+      {
+        if (ln.labels.length() == 1)
+        {
+          sl << QString("Label=%1").arg(ln.labels.at(0));
+        }
+        else
+        {
+          for (const QString &l : ln.labels)
+          {
+            sl << QString("Label%1=%2").arg(i).arg(l);
+            ++i;
+          }
+        }
+      }
+
+      sl << QString("Data0=%1").arg(convPolyToDegStr(p.coords));
+      sl << "[END]" << "\n";
+    }
+
+    qDebug() << "CGarminPoint polygons:" << polygons.length();
+    for (const CGarminPolygon &pg : polygons)
+    {
+      sl << "[POLYGON]";
+      sl << "Type=0x" + QString::number(pg.type, 16);
+
+      int i = 0;
+      if (pg.hasLabel())
+      {
+        if (pg.labels.length() == 1)
+        {
+          sl << QString("Label=%1").arg(pg.labels.at(0));
+        }
+        else
+        {
+          for (const QString &l : pg.labels)
+          {
+            sl << QString("Label%1=%2").arg(i).arg(l);
+            ++i;
+          }
+        }
+      }
+
+      sl << QString("Data0=%1").arg(convPolyToDegStr(p.coords));
+      sl << "[END]" << "\n";
+    }
+
+    writeStream(sl.join("\n"));
+  }
 
   void readBasics()
   {
     char tmpstr[64];
-    qint64 fsize = QFileInfo(filename).size();
+    qint64 fsize = QFileInfo(inputFile).size();
 
-    CFileExt file(filename);
+    CFileExt file(inputFile);
     if (!file.open(QIODevice::ReadOnly))
     {
-      throw exce_t(eErrOpen, tr("Failed to open: ") + filename);
+      throw exce_t(eErrOpen, tr("Failed to open: ") + inputFile);
     }
 
     mask = (quint8)*file.data(0, 1);
@@ -3788,16 +2084,16 @@ private:
 
     if (strncmp(pImgHdr->signature, "DSKIMG", 7) != 0)
     {
-      throw exce_t(errFormat, tr("Bad file format: ") + filename);
+      throw exce_t(errFormat, tr("Bad file format: ") + inputFile);
     }
     if (strncmp(pImgHdr->identifier, "GARMIN", 7) != 0)
     {
-      throw exce_t(errFormat, tr("Bad file format: ") + filename);
+      throw exce_t(errFormat, tr("Bad file format: ") + inputFile);
     }
 
     mapdesc = QByteArray((const char *)pImgHdr->desc1, 20);
     mapdesc += pImgHdr->desc2;
-    qDebug() << mapdesc;
+    qDebug() << "MAP Description:" << mapdesc;
 
     size_t blocksize = pImgHdr->blocksize();
 
@@ -3860,7 +2156,7 @@ private:
 
     if ((dataoffset == sizeof(hdr_img_t)) || (dataoffset >= (size_t)fsize))
     {
-      throw exce_t(errFormat, tr("Failed to read file structure: ") + filename);
+      throw exce_t(errFormat, tr("Failed to read file structure: ") + inputFile);
     }
 
     // gmapsupp.img files do not have a data offset field
@@ -3901,7 +2197,7 @@ private:
     {
       if ((*subfile).parts.contains("GMP"))
       {
-        throw exce_t(errFormat, tr("File is NT format. qgimg is unable to read map files with NT format: ") + filename);
+        throw exce_t(errFormat, tr("File is NT format. qgimg is unable to read map files with NT format: ") + inputFile);
       }
 
       readSubfileBasics(*subfile, file);
@@ -3919,10 +2215,12 @@ private:
       }
       copyright += str;
     }
+    // qDebug() << "copyright:" << copyright;
 
-    qDebug() << "dimensions:\t"
-             << "N" << (maparea.bottom() * RAD_TO_DEG) << "E" << (maparea.right() * RAD_TO_DEG) << "S"
-             << (maparea.top() * RAD_TO_DEG) << "W" << (maparea.left() * RAD_TO_DEG);
+    qDebug()
+        << "dimensions:\t"
+        << "N" << (maparea.bottom() * RAD_TO_DEG) << "E" << (maparea.right() * RAD_TO_DEG) << "S"
+        << (maparea.top() * RAD_TO_DEG) << "W" << (maparea.left() * RAD_TO_DEG);
   }
 
   void readSubfileBasics(subfile_desc_t &subfile, CFileExt &file)
@@ -3938,7 +2236,6 @@ private:
     hdr_tre_t *pTreHdr = (hdr_tre_t *)trehdr.data();
 
     subfile.isTransparent = pTreHdr->POI_flags & 0x02;
-    transparent = subfile.isTransparent ? true : transparent;
 
 #ifdef DEBUG_SHOW_TRE_DATA
     qDebug() << "+++" << subfile.name << "+++";
@@ -3988,8 +2285,7 @@ private:
     qDebug() << "bounding area (rad)" << subfile.area;
 
     QByteArray maplevel;
-    readFile(file, subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre1_offset),
-             gar_load(quint32, pTreHdr->tre1_size), maplevel);
+    readFile(file, subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre1_offset), gar_load(quint32, pTreHdr->tre1_size), maplevel);
     const tre_map_level_t *pMapLevel = (const tre_map_level_t *)maplevel.data();
 
     if (pTreHdr->flag & 0x80)
@@ -4001,6 +2297,7 @@ private:
     quint32 nsubdivs = 0;
     quint32 nsubdivs_last = 0;
 
+    // QMap<QString, QString> levelZoom;
     // count subsections
     for (quint32 i = 0; i < nlevels; ++i)
     {
@@ -4011,9 +2308,10 @@ private:
       subfile.maplevels << ml;
       nsubdivs += gar_load(uint16_t, pMapLevel->nsubdiv);
       nsubdivs_last = gar_load(uint16_t, pMapLevel->nsubdiv);
+      // levelZoom.insert(QVariant(ml.level).toString(), QVariant(ml.bits).toString());
 #ifdef DEBUG_SHOW_MAPLEVEL_DATA
-      qDebug() << "level:" << TRE_MAP_LEVEL(pMapLevel) << "| inherited:" << TRE_MAP_INHER(pMapLevel) << "| bits:"
-               << pMapLevel->bits << "| #subdivs:" << gar_load(uint16_t, pMapLevel->nsubdiv);
+      qDebug()
+          << "level:" << TRE_MAP_LEVEL(pMapLevel) << "| inherited:" << TRE_MAP_INHER(pMapLevel) << "| bits:" << pMapLevel->bits << "| #subdivs:" << gar_load(uint16_t, pMapLevel->nsubdiv);
 #endif // DEBUG_SHOW_MAPLEVEL_DATA
       ++pMapLevel;
     }
@@ -4042,15 +2340,14 @@ private:
     QByteArray rgnhdr;
     readFile(file, subfile.parts["RGN"].offset, sizeof(hdr_rgn_t), rgnhdr);
     hdr_rgn_t *pRgnHdr = (hdr_rgn_t *)rgnhdr.data();
-    quint32 rgnoff = /*subfile.parts["RGN"].offset +*/ gar_load(quint32, pRgnHdr->offset);
-
-    quint32 rgnOffPolyg2 = /*subfile.parts["RGN"].offset +*/ gar_load(quint32, pRgnHdr->offset_polyg2);
-    quint32 rgnOffPolyl2 = /*subfile.parts["RGN"].offset +*/ gar_load(quint32, pRgnHdr->offset_polyl2);
-    quint32 rgnOffPoint2 = /*subfile.parts["RGN"].offset +*/ gar_load(quint32, pRgnHdr->offset_point2);
-
-    quint32 rgnLenPolyg2 = /*subfile.parts["RGN"].offset +*/ gar_load(quint32, pRgnHdr->length_polyg2);
-    quint32 rgnLenPolyl2 = /*subfile.parts["RGN"].offset +*/ gar_load(quint32, pRgnHdr->length_polyl2);
-    quint32 rgnLenPoint2 = /*subfile.parts["RGN"].offset +*/ gar_load(quint32, pRgnHdr->length_point2);
+    // subfile.parts["RGN"].offset +
+    quint32 rgnoff = gar_load(quint32, pRgnHdr->offset);
+    quint32 rgnOffPolyg2 = gar_load(quint32, pRgnHdr->offset_polyg2);
+    quint32 rgnOffPolyl2 = gar_load(quint32, pRgnHdr->offset_polyl2);
+    quint32 rgnOffPoint2 = gar_load(quint32, pRgnHdr->offset_point2);
+    quint32 rgnLenPolyg2 = gar_load(quint32, pRgnHdr->length_polyg2);
+    quint32 rgnLenPolyl2 = gar_load(quint32, pRgnHdr->length_polyl2);
+    quint32 rgnLenPoint2 = gar_load(quint32, pRgnHdr->length_point2);
 
     qDebug() << "***" << Qt::hex << subfile.parts["RGN"].offset << (subfile.parts["RGN"].offset + subfile.parts["RGN"].size);
     qDebug() << "+++" << Qt::hex << rgnOffPolyg2 << (rgnOffPolyg2 + rgnLenPolyg2);
@@ -4166,11 +2463,11 @@ private:
     if ((gar_load(uint16_t, pTreHdr->hdr_subfile_part_t::length) >= 0x9A) && pTreHdr->tre7_size &&
         (gar_load(uint16_t, pTreHdr->tre7_rec_size) >= sizeof(tre_subdiv2_t)))
     {
-      if (subdiv->level > 0)
-      {
-        qDebug() << "Skiping level:" << subdiv->level;
-        // continue;
-      }
+      // if (subdiv->level > 0)
+      // {
+      //   qDebug() << "Skiping level:" << subdiv->level;
+      //   // continue;
+      // }
       rgnoff = subfile.parts["RGN"].offset;
       qDebug() << subdivs.count() << (pTreHdr->tre7_size / pTreHdr->tre7_rec_size) << pTreHdr->tre7_rec_size;
       QByteArray subdiv2;
@@ -4288,6 +2585,11 @@ private:
         codepage = gar_load(uint16_t, pLblHdr->codepage);
       }
 
+      if (codepage > 0)
+      {
+        mCodePage = QString("%1").arg(codepage);
+      }
+
       qDebug() << file.fileName() << Qt::hex << offsetLbl1 << offsetLbl6 << offsetNet1;
 
       QObject *obj = qobject_cast<QObject *>(this);
@@ -4295,11 +2597,13 @@ private:
       {
       case 0x06:
         subfile.strtbl = new CGarminStrTbl6(codepage, mask, obj);
+        mCoding = QString("%1").arg(pLblHdr->coding);
         break;
 
-      case 0x09:
-      case 0x0A:
+      case 0x09: // utf-8
+      case 0x0A: // utf-10?
         subfile.strtbl = new CGarminStrTblUtf8(codepage, mask, obj);
+        mCoding = QString("%1").arg(pLblHdr->coding);
         break;
 
       default:
@@ -4320,10 +2624,7 @@ private:
 
   void processPrimaryMapData()
   {
-    /*
-     * Query all subfiles for possible maplevels.
-     * Exclude basemap to avoid pollution.
-     */
+    // Query all subfiles for possible maplevels. Exclude basemap to avoid pollution
     for (const subfile_desc_t &subfile : std::as_const(subfiles))
     {
       for (const maplevel_t &maplevel : subfile.maplevels)
@@ -4339,9 +2640,10 @@ private:
       }
     }
 
-    /* Sort all entries, note that stable sort should insure that basemap is preferred when available. */
+    // Sort all entries, note that stable sort should insure that basemap is preferred when available
     std::stable_sort(maplevels.begin(), maplevels.end(), map_level_t::GreaterThan);
-    /* Delete any duplicates for obvious performance reasons. */
+
+    // Delete any duplicates for obvious performance reasons
     auto where = std::unique(maplevels.begin(), maplevels.end());
     maplevels.erase(where, maplevels.end());
 
@@ -4349,16 +2651,56 @@ private:
     for (int i = 0; i < maplevels.count(); ++i)
     {
       map_level_t &ml = maplevels[i];
-      qDebug() << ml.bits << ml.level << ml.useBaseMap;
     }
 #endif
+  }
+
+  void printHeader()
+  {
+    qDebug() << "ALL MAP LEVEL:" << subfiles.size() << subfiles.count();
+    bool isFirst = true;
+
+    QStringList sl;
+    QString name = "";
+    QMap<QString, QString> levelZoom;
+    QStringList zooms;
+    QStringList levels;
+
+    for (const subfile_desc_t &subfile : std::as_const(subfiles))
+    {
+      if (isFirst)
+      {
+        isFirst = false;
+
+        for (int i = 0; i < maplevels.count(); ++i)
+        {
+          map_level_t &ml = maplevels[i];
+          levelZoom.insert(QVariant(ml.level).toString(), QVariant(ml.bits).toString());
+        }
+
+        name = subfile.name;
+
+        int index = 0;
+        for (auto [key, value] : levelZoom.asKeyValueRange())
+        {
+          levels << QString("Level%1=%2").arg(index).arg(value);
+          zooms << QString("Zoom%1=%2").arg(index).arg(key);
+          ++index;
+        }
+      }
+    }
+
+    sl << "; Generated by qgimg 1.0\n"
+       << "[IMG ID]" << QString("CodePage=%1").arg(mCodePage) << QString("LblCoding=%1").arg(mCoding)
+       << QString("ID=%1").arg(name) << QString("Name=%1").arg(mapdesc.trimmed()) << QString("Levels=%1").arg(levelZoom.count()) << levels << zooms << "[END-IMG ID]\n\n";
+    writeStream(sl.join("\n"));
   }
 
   void readFile(CFileExt &file, quint32 offset, quint32 size, QByteArray &data)
   {
     if (offset + size > file.size())
     {
-      throw exce_t(eErrOpen, tr("Failed to read: ") + filename);
+      throw exce_t(eErrOpen, tr("Failed to read: ") + inputFile);
     }
 
     data = QByteArray::fromRawData(file.data(offset, size), size);
@@ -4368,7 +2710,6 @@ private:
       return;
     }
 
-#ifdef HOST_IS_64_BIT
     quint64 *p64 = (quint64 *)data.data();
     for (quint32 i = 0; i < size / 8; ++i)
     {
@@ -4376,71 +2717,12 @@ private:
     }
     quint32 rest = size % 8;
     quint8 *p = (quint8 *)p64;
-#else
-    quint32 *p32 = (quint32 *)data.data();
-    for (quint32 i = 0; i < size / 4; ++i)
-    {
-      *p32++ ^= mask32;
-    }
-    quint32 rest = size % 4;
-    quint8 *p = (quint8 *)p32;
-#endif
 
     for (quint32 i = 0; i < rest; ++i)
     {
       *p++ ^= mask;
     }
   }
-
-  QString filename = "02235001-trim.img";
-  quint8 mask;
-  quint32 mask32;
-  quint64 mask64;
-  QString mapdesc;
-  /// hold all subfile descriptors
-  /**
-      In a normal *.img file there is only one subfile. However
-      gmapsupp.img files can hold several subfiles each with it's
-      own subfile parts.
-   */
-  QMap<QString, subfile_desc_t> subfiles;
-  /// relay the transparent flags from the subfiles
-  bool transparent = false;
-
-  QRectF maparea;
-
-  // QFontMetrics fm;
-
-  /// combined maplevels of all tiles
-  QVector<map_level_t> maplevels;
-
-  QMap<quint32, CGarminTyp::polyline_property> polylineProperties;
-  QMap<quint32, CGarminTyp::polygon_property> polygonProperties;
-  QList<quint32> polygonDrawOrder;
-  QMap<quint32, CGarminTyp::point_property> pointProperties;
-  QMap<quint8, QString> languages;
-
-  polytype_t polygons;
-  polytype_t polylines;
-  pointtype_t points;
-  pointtype_t pois;
-
-  QVector<strlbl_t> labels;
-
-  struct textpath_t
-  {
-    // QPainterPath path;
-    QPolygonF polyline;
-    QString text;
-    // QFont font;
-    QVector<qreal> lengths;
-    qint32 lineWidth;
-    QColor color;
-  };
-
-  QVector<textpath_t> textpaths;
-  qint8 selectedLanguage;
-  QSet<QString> copyrights;
 };
 
 int main(int argc, char *argv[])
@@ -4448,3 +2730,107 @@ int main(int argc, char *argv[])
   CMap cmap(argc, argv);
   return 0;
 }
+
+// samo za spravka
+/*
+void getInfoPolylines(const QPoint &pt, QMultiMap<QString, QString> &dict) const
+{
+  PJ_UV p1, p2;        // the two points of the polyline close to pt
+  qreal u;             // ratio u the tangent point will divide d_p1_p2
+  qreal shortest = 20; // shortest distance so far
+
+  QPointF resPt = pt;
+  QString key;
+  QStringList value;
+  quint32 type = 0;
+
+  bool found = false;
+
+  for (const CGarminPolygon &line : polylines)
+  {
+    int len = line.pixel.size();
+    // need at least 2 points
+    if (len < 2)
+    {
+      continue;
+    }
+
+    // see http://local.wasp.uwa.edu.au/~pbourke/geometry/pointline/
+    for (int i = 1; i < len; ++i)
+    {
+      p1.u = line.pixel[i - 1].x();
+      p1.v = line.pixel[i - 1].y();
+      p2.u = line.pixel[i].x();
+      p2.v = line.pixel[i].y();
+
+      qreal dx = p2.u - p1.u;
+      qreal dy = p2.v - p1.v;
+
+      // distance between p1 and p2
+      qreal d_p1_p2 = qSqrt(dx * dx + dy * dy);
+
+      u = ((pt.x() - p1.u) * dx + (pt.y() - p1.v) * dy) / (d_p1_p2 * d_p1_p2);
+
+      if (u < 0.0 || u > 1.0)
+      {
+        continue;
+      }
+
+      // coord. (x,y) of the point on line defined by [p1,p2] close to pt
+      qreal x = p1.u + u * dx;
+      qreal y = p1.v + u * dy;
+
+      qreal distance = qSqrt((x - pt.x()) * (x - pt.x()) + (y - pt.y()) * (y - pt.y()));
+
+      if (distance < shortest)
+      {
+        type = line.type;
+        value.clear();
+        value << (line.hasLabel() ? line.getLabelText() : "-");
+
+        resPt.setX(x);
+        resPt.setY(y);
+        shortest = distance;
+        found = true;
+      }
+      else if (distance == shortest)
+      {
+        if (line.hasLabel())
+        {
+          value << line.getLabelText();
+        }
+      }
+    }
+  }
+}
+
+void getInfoPolygons(const QPoint &pt, QMultiMap<QString, QString> &dict) const
+{
+  PJ_UV p1, p2; // the two points of the polyline close to pt
+  const qreal x = pt.x();
+  const qreal y = pt.y();
+
+  for (const CGarminPolygon &line : polygons)
+  {
+    int npol = line.pixel.size();
+    if (npol > 2)
+    {
+      bool c = false;
+      // see http://local.wasp.uwa.edu.au/~pbourke/geometry/insidepoly/
+      for (int i = 0, j = npol - 1; i < npol; j = i++)
+      {
+        p1.u = line.pixel[j].x();
+        p1.v = line.pixel[j].y();
+        p2.u = line.pixel[i].x();
+        p2.v = line.pixel[i].y();
+
+        if ((((p2.v <= y) && (y < p1.v)) || ((p1.v <= y) && (y < p2.v))) &&
+            (x < (p1.u - p2.u) * (y - p2.v) / (p1.v - p2.v) + p2.u))
+        {
+          c = !c;
+        }
+      }
+    }
+  }
+}
+*/
