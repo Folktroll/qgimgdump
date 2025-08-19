@@ -15,12 +15,13 @@
 #define DEBUG_SHOW_MAPLEVELS
 // #define DEBUG_SHOW_POINTS
 #define DEBUG_SHOW_POLY_DATA_SUBDIV
-#define DEBUG_SHOW_POLY_DATA_DECODE1
+// #define DEBUG_SHOW_POLY_DATA_DECODE1
 // #define DEBUG_SHOW_POLY_DATA_DECODE2
 #define DEBUG_SHOW_POLY_PTS
 
-#define MAX_FLOAT_PREC 16777216.0     // 2^24: precision limit of float
-#define RAD_TO_DEG 57.295779513082321 // 180 / M_PI ?
+#define MAX_FLOAT_PREC 16777216.0 // 2^24: precision limit of float
+#define RAD_TO_DEG 180 / M_PI
+#define DEG_TO_RAD M_PI / 180
 #define GARMIN_DEG(x) ((x) < 0x800000 ? (qreal)(x) * 360.0 / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * 360.0 / MAX_FLOAT_PREC)
 #define GARMIN_RAD(x) ((x) < 0x800000 ? (qreal)(x) * (2 * M_PI) / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * (2 * M_PI) / MAX_FLOAT_PREC)
 
@@ -161,7 +162,7 @@ protected:
   {
     if (offset + size > file.size())
     {
-      //         throw exce_t(eErrOpen, tr("Failed to read: ") + file.filename());
+      // throw exce_t(eErrOpen, tr("Failed to read: ") + file.filename());
       return;
     }
 
@@ -215,7 +216,7 @@ protected:
     }
 
     newOffset <<= addrshift1;
-    //     qDebug() << Qt::hex << newOffset;
+    // qDebug() << Qt::hex << newOffset;
     return newOffset;
   }
 
@@ -284,8 +285,8 @@ public:
 
     if (offset > (quint32)sizeLBL1)
     {
-      //         qWarning() << "Index into string table to large" << Qt::hex << offset << dataLBL.size() <<
-      //         hdrLbl->addr_shift << hdrNet->net1_addr_shift;
+      // qWarning() << "Index into string table to large" << Qt::hex << offset << dataLBL.size() <<
+      // hdrLbl->addr_shift << hdrNet->net1_addr_shift;
       return;
     }
 
@@ -531,15 +532,11 @@ public:
   }
 
   bool hasLabel() const { return !labels.isEmpty(); }
-
   quint32 type = 0;
   bool isLbl6 = false;
   bool hasSubType = false;
-
   QPointF pos;
-
   QStringList labels;
-
   quint32 lbl_ptr = 0xFFFFFFFF;
 };
 
@@ -782,7 +779,7 @@ public:
 
     pData += 3;
 
-    //     qDebug() << Qt::hex << lbl_in_NET << extra_bit << lbl_info;
+    // qDebug() << Qt::hex << lbl_in_NET << extra_bit << lbl_info;
 
     // delta longitude and latitude
     dLng = gar_ptr_load(uint16_t, pData);
@@ -867,9 +864,6 @@ public:
       coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
     }
 
-    id = cnt++;
-    //     qDebug() << "<<<" << id;
-
     if (maxVecSize < coords.size())
     {
       maxVecSize = coords.size();
@@ -881,7 +875,7 @@ public:
 
     pixel = coords;
 
-    qDebug() << "decode1() coords:" << type << Qt::hex << type << Qt::hex << bs_info << coords << id;
+    // qDebug() << "decode1() coords:" << type << Qt::hex << type << Qt::hex << bs_info << coords;
 
     return bytes_total;
   }
@@ -948,9 +942,9 @@ public:
     sign_info_t signinfo;
     bits_per_coord(bs_info, *pData, bx, by, signinfo, true);
 
-    //     qDebug() << ">>" << bs_len << bytes_total << (pEnd - pStart);
+    // qDebug() << ">>" << bs_len << bytes_total << (pEnd - pStart);
 
-    //     assert((pEnd - pStart) >= bytes_total);
+    // assert((pEnd - pStart) >= bytes_total);
     if (((quint32)(pEnd - pStart)) < bytes_total)
     {
       return pEnd - pStart;
@@ -982,17 +976,17 @@ public:
         x1 = 0x7fffff;
       }
 
-      //        xy.u = GARMIN_RAD(x1);
-      //        xy.v = GARMIN_RAD(y1);
+      // xy.u = GARMIN_RAD(x1);
+      // xy.v = GARMIN_RAD(y1);
 
-      //        if(qAbs(xy.v) > 2*M_PI || qAbs(xy.u) > 2*M_PI)
-      //        {
-      //            qDebug() << "bam";
-      //            qDebug() << xy.u << xy.v << pStart << pEnd << (pEnd - pStart) << (cnt + 1) << line;
-      //            //assert(0);
-      //        }
+      // if(qAbs(xy.v) > 2*M_PI || qAbs(xy.u) > 2*M_PI)
+      // {
+      //    qDebug() << "bam";
+      //    qDebug() << xy.u << xy.v << pStart << pEnd << (pEnd - pStart) << (cnt + 1) << line;
+      //    //assert(0);
+      // }
       // #ifdef DEBUG_SHOW_POLY_PTS
-      //        qDebug() << xy.u << xy.v << (RAD_TO_DEG * xy.u) << (RAD_TO_DEG * xy.v);
+      // qDebug() << xy.u << xy.v << (RAD_TO_DEG * xy.u) << (RAD_TO_DEG * xy.v);
       // #endif
       coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
     }
@@ -1007,9 +1001,6 @@ public:
     {
       lbl_info = 0;
     }
-
-    id = cnt++;
-    //     qDebug() << "<<<" << id;
 
     if (maxVecSize < coords.size())
     {
@@ -1050,8 +1041,6 @@ public:
   /// the actual polyline points as longitude / latitude [rad]
   QPolygonF coords;
 
-  quint32 id = 0;
-
   QStringList labels;
 
   inline static quint32 cnt = 0;
@@ -1064,14 +1053,14 @@ private:
 
     quint8 mask = 0x1;
 
-    //     x_sign_same = bfirst & 0x1;
+    // x_sign_same = bfirst & 0x1;
     x_sign_same = bfirst & mask;
     mask <<= 1;
 
     if (x_sign_same)
     {
       signinfo.x_has_sign = false;
-      //         signinfo.nx         = bfirst & 0x2;
+      // signinfo.nx         = bfirst & 0x2;
       signinfo.nx = bfirst & mask;
       mask <<= 1;
       ++signinfo.sign_info_bits;
@@ -1082,14 +1071,14 @@ private:
     }
     bx = bits_per_coord(base & 0x0F, signinfo.x_has_sign);
 
-    //     y_sign_same = x_sign_same ? (bfirst & 0x04) : (bfirst & 0x02);
+    // y_sign_same = x_sign_same ? (bfirst & 0x04) : (bfirst & 0x02);
     y_sign_same = bfirst & mask;
     mask <<= 1;
 
     if (y_sign_same)
     {
       signinfo.y_has_sign = false;
-      //         signinfo.ny         = x_sign_same ? bfirst & 0x08 : bfirst & 0x04;
+      // signinfo.ny         = x_sign_same ? bfirst & 0x08 : bfirst & 0x04;
       signinfo.ny = bfirst & mask;
       mask <<= 1;
       ++signinfo.sign_info_bits;
@@ -1107,7 +1096,7 @@ private:
       ++signinfo.sign_info_bits;
       if (bfirst & mask)
       {
-        //             qDebug() << "V2";
+        //     qDebug() << "V2";
         ++bx;
         ++by;
       }
@@ -1208,12 +1197,12 @@ public:
       exit(1);
     }
 
-    outStream.setDevice(&of);
-    if (!outStream.device())
+    codec = QTextCodec::codecForName("Windows-1251");
+    if (!codec)
     {
-      qCritical() << "Stream has no device!";
-      return;
+      qWarning("CP1251 codec not available");
     }
+    // of.setBufferSize(16 * 1024);
 
     try
     {
@@ -1221,35 +1210,33 @@ public:
       processPrimaryMapData();
       printHeader();
 
-      // quint8 bits = scale2bits(bufferScale);
-      quint8 bits = 23;
-
-      QVector<map_level_t>::const_iterator maplevel = maplevels.constEnd();
-      // qDebug() << "MAP LEVELS:" << maplevel;
-
-      do
+      QVector<map_level_t>::const_iterator maplevel = maplevels.constBegin();
+      while (maplevel)
+      // QMapIterator<QString, int> i(maplevels);
+      // while (i.hasNext())
       {
-        --maplevel;
-        if (bits >= maplevel->bits)
+        // const auto maplevel = i.value()->level;
+        // loadData(polygons, polylines, points, pois, maplevel);
+        ++maplevel;
+        loadData(polygons, polylines, points, pois, maplevel->level);
+
+        if (maplevels.constEnd() == maplevel)
         {
           break;
         }
-      } while (maplevel != maplevels.constBegin());
-
-      // qApp->quit();
-
-      loadData(polygons, polylines, points, pois, maplevel->level);
+      }
     }
     catch (const exce_t &e)
     {
       qDebug() << "Fatal error:" << e.msg;
     }
   }
+
   virtual ~CMap()
   {
     if (of.isOpen())
     {
-      outStream.flush();
+      of.flush();
       of.close();
     }
     qDebug() << "✅ Done.";
@@ -1622,7 +1609,7 @@ private:
   QString inputFile = "";
   QString outputFile = "";
   QFile of;
-  QTextStream outStream;
+  QTextCodec *codec = nullptr;
   quint8 mask;
   quint32 mask32;
   quint64 mask64;
@@ -1638,45 +1625,67 @@ private:
   QString mCodePage = "";
   QString mCoding = "";
 
-  QString
-  convPolyToDegStr(const QPolygonF &polygon)
+  QString convPtDegStr(const QPointF &point)
   {
-    QString result;
-    const double radToDeg = 180.0 / M_PI;
-
-    for (const QPointF &point : polygon)
-    {
-      // Конвертиране от радиани в градуси
-      double lon = point.x() * radToDeg;
-      double lat = point.y() * radToDeg;
-
-      // Форматиране с 5 знака след десетичната запетая
-      QString pointStr = QString("(%1,%2)").arg(lat, 0, 'f', 5).arg(lon, 0, 'f', 5);
-
-      // Добавяне към резултата (с запетая между точките)
-      if (!result.isEmpty())
-      {
-        result += ",";
-      }
-      result += pointStr;
-    }
-
-    return result;
+    return QString("(%1,%2)").arg(point.y() * RAD_TO_DEG, 0, 'f', 5).arg(point.x() * RAD_TO_DEG, 0, 'f', 5);
   }
 
-  void writeStream(const QString &data)
+  QString convLnDegStr(const QPolygonF &polygon)
   {
-    outStream << data;
-    outStream.flush();
+    QStringList resultSl;
+    for (const QPointF &point : polygon)
+    {
+      resultSl << convPtDegStr(point);
+    }
+    return resultSl.join(',');
+  }
+
+  static inline bool isCompletelyOutside(const QPolygonF &poly, const QRectF &viewport)
+  {
+    // qDebug() << "isCompletelyOutside()" << poly << viewport << viewport.topLeft() << viewport.bottomRight();
+    qreal north = -90.0 * DEG_TO_RAD;
+    qreal south = 90.0 * DEG_TO_RAD;
+    qreal west = 180.0 * DEG_TO_RAD;
+    qreal east = -180.0 * DEG_TO_RAD;
+
+    for (const QPointF &pt : poly)
+    {
+      if (north < pt.y())
+      {
+        north = pt.y();
+      }
+      if (south > pt.y())
+      {
+        south = pt.y();
+      }
+      if (west > pt.x())
+      {
+        west = pt.x();
+      }
+      if (east < pt.x())
+      {
+        east = pt.x();
+      }
+    }
+
+    QRectF ref(west, north, east - west, south - north);
+
+    if (ref.width() == 0)
+    {
+      ref.setWidth(0.00001);
+    }
+    if (ref.height() == 0)
+    {
+      ref.setHeight(0.00001);
+    }
+
+    return !viewport.intersects(ref);
   }
 
   void loadData(polytype_t &polygons, polytype_t &polylines, pointtype_t &points, pointtype_t &pois, unsigned level)
   {
-    // qDebug() << "level:" << level;
-    // if (level != 0)
-    // {
-    //   qDebug() << "skip level:" << level;
-    // }
+    qDebug() << "ML:111 level" << level;
+
     for (const subfile_desc_t &subfile : std::as_const(subfiles))
     {
       qDebug() << "-------";
@@ -1696,6 +1705,11 @@ private:
       const QVector<subdiv_desc_t> &subdivs = subfile.subdivs;
       for (const subdiv_desc_t &subdiv : subdivs)
       {
+        if (subdiv.level != level)
+        {
+          qDebug() << "Level does not exists (skip):" << level << subdiv.level;
+          continue;
+        }
         loadSubDiv(file, subdiv, subfile.strtbl, rgndata, polylines, polygons, points, pois);
       }
 
@@ -1710,8 +1724,14 @@ private:
     {
       return;
     }
-    fprintf(stderr, "loadSubDiv\n");
-    qDebug() << "---------" << file.fileName() << "---------";
+
+    points.clear();
+    pois.clear();
+    polylines.clear();
+    polygons.clear();
+
+    qDebug() << "\n--------- loadSubDiv()" << file.fileName() << "---------";
+    qDebug() << " Level:" << subdiv.level << " Area:" << subdiv.area;
 
     const quint8 *pRawData = (quint8 *)rgndata.data();
 
@@ -1726,7 +1746,7 @@ private:
       opnt = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
     }
 
-    // test for indexed points
+    // test for pois
     if (subdiv.hasIdxPoints)
     {
       if (opnt)
@@ -1772,12 +1792,12 @@ private:
     }
 
 #ifdef DEBUG_SHOW_POLY_DATA_SUBDIV
-    qDebug() << "--- Subdivision" << subdiv.n << "---";
-    qDebug() << "address:" << Qt::hex << subdiv.rgn_start << "- " << subdiv.rgn_end;
-    qDebug() << "points:            " << Qt::hex << opnt;
-    qDebug() << "indexed points:    " << Qt::hex << oidx;
-    qDebug() << "polylines:         " << Qt::hex << opline;
-    qDebug() << "polygons:          " << Qt::hex << opgon;
+    qDebug() << "--- Subdivision" << subdiv.n << subdiv.area.topLeft() << subdiv.area.bottomRight() << "---";
+    qDebug() << "addr:" << Qt::hex << subdiv.rgn_start << "- " << subdiv.rgn_end;
+    qDebug() << "addr points:            " << Qt::hex << opnt;
+    qDebug() << "addr pois:    " << Qt::hex << oidx;
+    qDebug() << "addr polylines:         " << Qt::hex << opline;
+    qDebug() << "addr polygons:          " << Qt::hex << opgon;
 #endif
 
     CGarminPolygon p;
@@ -1794,6 +1814,13 @@ private:
         CGarminPoint p;
         pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
 
+        // skip points outside our current viewport
+        if (!subdiv.area.contains(p.pos))
+        {
+          qDebug() << "skip points outside our current viewport:" << subdiv.area.topLeft() << subdiv.area.bottomRight() << p.pos;
+          continue;
+        }
+
         if (strtbl)
         {
           p.isLbl6 ? strtbl->get(file, p.lbl_ptr, IGarminStrTbl::poi, p.labels) : strtbl->get(file, p.lbl_ptr, IGarminStrTbl::norm, p.labels);
@@ -1803,7 +1830,7 @@ private:
       }
     }
 
-    // decode indexed points
+    // decode pois
     if (subdiv.hasIdxPoints)
     {
       const quint8 *pData = pRawData + oidx;
@@ -1813,6 +1840,12 @@ private:
       {
         CGarminPoint p;
         pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
+
+        // skip points outside our current viewport
+        if (!subdiv.area.contains(p.pos))
+        {
+          continue;
+        }
 
         if (strtbl)
         {
@@ -1832,7 +1865,12 @@ private:
       while (pData < pEnd)
       {
         pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd);
-        // pData += p.decode2(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd); // da testvam da vidim kakvo shte vyrne
+
+        // skip points outside our current viewport
+        if (isCompletelyOutside(p.pixel, subdiv.area))
+        {
+          continue;
+        }
 
         if (strtbl && !p.lbl_in_NET && p.lbl_info)
         {
@@ -1858,6 +1896,12 @@ private:
       {
         pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
 
+        // skip points outside our current viewport
+        if (isCompletelyOutside(p.pixel, subdiv.area))
+        {
+          continue;
+        }
+
         if (strtbl && !p.lbl_in_NET && p.lbl_info)
         {
           strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
@@ -1866,21 +1910,20 @@ private:
         {
           strtbl->get(file, p.lbl_info, IGarminStrTbl::net, p.labels);
         }
+
         polygons.push_back(p);
       }
     }
 
-    qDebug() << "--- Subdivision" << subdiv.n << "---";
-    qDebug() << "adress:" << Qt::hex << subdiv.rgn_start << "- " << subdiv.rgn_end;
-    qDebug() << "polyg off: " << Qt::hex << subdiv.offsetPolygons2;
-    qDebug() << "polyg len: " << Qt::hex << subdiv.lengthPolygons2 << subdiv.lengthPolygons2;
-    qDebug() << "polyg end: " << Qt::hex << subdiv.lengthPolygons2 + subdiv.offsetPolygons2;
-    qDebug() << "polyl off: " << Qt::hex << subdiv.offsetPolylines2;
-    qDebug() << "polyl len: " << Qt::hex << subdiv.lengthPolylines2 << subdiv.lengthPolylines2;
-    qDebug() << "polyl end: " << Qt::hex << subdiv.lengthPolylines2 + subdiv.offsetPolylines2;
-    qDebug() << "point off: " << Qt::hex << subdiv.offsetPoints2;
-    qDebug() << "point len: " << Qt::hex << subdiv.lengthPoints2 << subdiv.lengthPoints2;
-    qDebug() << "point end: " << Qt::hex << subdiv.lengthPoints2 + subdiv.offsetPoints2;
+    // qDebug() << "polyg off: " << Qt::hex << subdiv.offsetPolygons2;
+    // qDebug() << "polyg len: " << Qt::hex << subdiv.lengthPolygons2 << subdiv.lengthPolygons2;
+    // qDebug() << "polyg end: " << Qt::hex << subdiv.lengthPolygons2 + subdiv.offsetPolygons2;
+    // qDebug() << "polyl off: " << Qt::hex << subdiv.offsetPolylines2;
+    // qDebug() << "polyl len: " << Qt::hex << subdiv.lengthPolylines2 << subdiv.lengthPolylines2;
+    // qDebug() << "polyl end: " << Qt::hex << subdiv.lengthPolylines2 + subdiv.offsetPolylines2;
+    // qDebug() << "point off: " << Qt::hex << subdiv.offsetPoints2;
+    // qDebug() << "point len: " << Qt::hex << subdiv.lengthPoints2 << subdiv.lengthPoints2;
+    // qDebug() << "point end: " << Qt::hex << subdiv.lengthPoints2 + subdiv.offsetPoints2;
 
     if (subdiv.lengthPolygons2)
     {
@@ -1890,6 +1933,12 @@ private:
       {
         // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
         pData += p.decode2(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
+
+        // skip points outside our current viewport
+        if (isCompletelyOutside(p.pixel, subdiv.area))
+        {
+          continue;
+        }
 
         if (strtbl && !p.lbl_in_NET && p.lbl_info)
         {
@@ -1909,12 +1958,17 @@ private:
         // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
         pData += p.decode2(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd);
 
+        // skip points outside our current viewport
+        if (isCompletelyOutside(p.pixel, subdiv.area))
+        {
+          continue;
+        }
+
         if (strtbl && !p.lbl_in_NET && p.lbl_info)
         {
           strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
         }
 
-        // qDebug() << pData;
         polylines.push_back(p);
       }
     }
@@ -1929,10 +1983,17 @@ private:
         // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
         pData += p.decode2(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData, pEnd);
 
+        // skip points outside our current viewport
+        if (!subdiv.area.contains(p.pos))
+        {
+          continue;
+        }
+
         if (strtbl)
         {
           p.isLbl6 ? strtbl->get(file, p.lbl_ptr, IGarminStrTbl::poi, p.labels) : strtbl->get(file, p.lbl_ptr, IGarminStrTbl::norm, p.labels);
         }
+
         pois.push_back(p);
       }
     }
@@ -1940,12 +2001,14 @@ private:
     // po dobre tuka da se pishe vyv faila...
     QStringList sl = QStringList();
 
-    qDebug() << "CGarminPoint points:" << points.length();
+    qDebug() << "total points:" << points.length();
 
+    int count = 0;
     for (const CGarminPoint &pt : points)
     {
-      sl << "[POINT]";
-      sl << "Type=0x" + QString::number(pt.type, 16);
+      ++count;
+      // sl << "[POINT]" << QString("; subdiv=%1 | level=%2 | count=%3 | hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) << "Type=0x" + QString::number(pt.type, 16);
+      sl << "[POI]" << QString("; subdiv=%1 | level=%2 | count=%3 | hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) << "Type=0x" + QString::number(pt.type, 16);
 
       int i = 0;
       if (pt.hasLabel())
@@ -1964,15 +2027,19 @@ private:
         }
       }
 
-      sl << QString("Data0=%1").arg(convPolyToDegStr(p.coords));
+      if (!pt.pos.isNull())
+      {
+        sl << QString("Data%1=%2").arg(subdiv.level).arg(convPtDegStr(pt.pos));
+      }
       sl << "[END]" << "\n";
     }
 
-    qDebug() << "CGarminPoint pois:" << pois.length();
+    count = 0;
+    qDebug() << "total pois : " << pois.length();
     for (const CGarminPoint &poi : pois)
     {
-      sl << "[POI]";
-      sl << "Type=0x" + QString::number(poi.type, 16);
+      ++count;
+      sl << "[POI]" << QString("; subdiv=%1 | level=%2 | count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(poi.type, 16);
 
       int i = 0;
       if (poi.hasLabel())
@@ -1991,15 +2058,19 @@ private:
         }
       }
 
-      sl << QString("Data0=%1").arg(convPolyToDegStr(p.coords));
+      if (!poi.pos.isNull())
+      {
+        sl << QString("Data%1=%2").arg(subdiv.level).arg(convPtDegStr(poi.pos));
+      }
       sl << "[END]" << "\n";
     }
 
-    qDebug() << "CGarminPoint polylines:" << polylines.length();
+    count = 0;
+    qDebug() << "total polylines:" << polylines.length();
     for (const CGarminPolygon &ln : polylines)
     {
-      sl << "[POLYLINE]";
-      sl << "Type=0x" + QString::number(ln.type, 16);
+      ++count;
+      sl << "[POLYLINE]" << QString("; subdiv=%1 | level=%2 | count=%3 | hasSubType=?").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type = 0x" + QString::number(ln.type, 16);
 
       int i = 0;
       if (ln.hasLabel())
@@ -2018,15 +2089,19 @@ private:
         }
       }
 
-      sl << QString("Data0=%1").arg(convPolyToDegStr(p.coords));
+      if (ln.coords.size() > 0)
+      {
+        sl << QString("Data%1=%2").arg(subdiv.level).arg(convLnDegStr(ln.coords));
+      }
       sl << "[END]" << "\n";
     }
 
-    qDebug() << "CGarminPoint polygons:" << polygons.length();
+    count = 0;
+    qDebug() << "total polygons:" << polygons.length();
     for (const CGarminPolygon &pg : polygons)
     {
-      sl << "[POLYGON]";
-      sl << "Type=0x" + QString::number(pg.type, 16);
+      ++count;
+      sl << "[POLYGON]" << QString("; subdiv=%1 | level=%2 | count=%3 | %4 = %5").arg(subdiv.n).arg(subdiv.level).arg(count).arg(RAD_TO_DEG).arg(180 / M_PI) << "Type=0x" + QString::number(pg.type, 16);
 
       int i = 0;
       if (pg.hasLabel())
@@ -2045,11 +2120,15 @@ private:
         }
       }
 
-      sl << QString("Data0=%1").arg(convPolyToDegStr(p.coords));
+      if (pg.coords.size() > 0)
+      {
+        sl << QString("Data%1=%2").arg(subdiv.level).arg(convLnDegStr(pg.coords));
+      }
       sl << "[END]" << "\n";
     }
 
-    writeStream(sl.join("\n"));
+    of.write(codec->fromUnicode(sl.join("\n")));
+    of.flush();
   }
 
   void readBasics()
@@ -2463,11 +2542,6 @@ private:
     if ((gar_load(uint16_t, pTreHdr->hdr_subfile_part_t::length) >= 0x9A) && pTreHdr->tre7_size &&
         (gar_load(uint16_t, pTreHdr->tre7_rec_size) >= sizeof(tre_subdiv2_t)))
     {
-      // if (subdiv->level > 0)
-      // {
-      //   qDebug() << "Skiping level:" << subdiv->level;
-      //   // continue;
-      // }
       rgnoff = subfile.parts["RGN"].offset;
       qDebug() << subdivs.count() << (pTreHdr->tre7_size / pTreHdr->tre7_rec_size) << pTreHdr->tre7_rec_size;
       QByteArray subdiv2;
@@ -2538,7 +2612,7 @@ private:
         qDebug() << "center lng         " << GARMIN_DEG(subdiv->iCenterLng);
         qDebug() << "center lat         " << GARMIN_DEG(subdiv->iCenterLat);
         qDebug() << "has points         " << subdiv->hasPoints;
-        qDebug() << "has indexed points " << subdiv->hasIdxPoints;
+        qDebug() << "has pois " << subdiv->hasIdxPoints;
         qDebug() << "has polylines      " << subdiv->hasPolylines;
         qDebug() << "has polygons       " << subdiv->hasPolygons;
         qDebug() << "bounding area (m)  " << subdiv->area.topLeft() << subdiv->area.bottomRight();
@@ -2629,7 +2703,7 @@ private:
     {
       for (const maplevel_t &maplevel : subfile.maplevels)
       {
-        if (!maplevel.inherited)
+        // if (!maplevel.inherited) // премахва първият слой, който по-принцип не ни трябва, но изглежда по-близо до резултата от MapEdit
         {
           map_level_t ml;
           ml.bits = maplevel.bits;
@@ -2648,9 +2722,11 @@ private:
     maplevels.erase(where, maplevels.end());
 
 #ifdef DEBUG_SHOW_MAPLEVELS
+    qDebug() << "========= Map levels info: =========";
     for (int i = 0; i < maplevels.count(); ++i)
     {
       map_level_t &ml = maplevels[i];
+      qDebug() << ml.bits << ml.level << ml.useBaseMap;
     }
 #endif
   }
@@ -2693,7 +2769,9 @@ private:
     sl << "; Generated by qgimg 1.0\n"
        << "[IMG ID]" << QString("CodePage=%1").arg(mCodePage) << QString("LblCoding=%1").arg(mCoding)
        << QString("ID=%1").arg(name) << QString("Name=%1").arg(mapdesc.trimmed()) << QString("Levels=%1").arg(levelZoom.count()) << levels << zooms << "[END-IMG ID]\n\n";
-    writeStream(sl.join("\n"));
+
+    of.write(codec->fromUnicode(sl.join("\n")));
+    of.flush();
   }
 
   void readFile(CFileExt &file, quint32 offset, quint32 size, QByteArray &data)
