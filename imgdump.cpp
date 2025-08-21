@@ -12,13 +12,16 @@
 #define DEBUG_SHOW_MAPLEVEL_DATA
 #define DEBUG_SHOW_SUBDIV_DATA
 #define DEBUG_SHOW_MAPLEVELS
-#define DEBUG_SHOW_POLY_DATA_SUBDIV
+// #define DEBUG_SHOW_POLY_DATA_SUBDIV
 // #define DEBUG_SHOW_POLY_DATA_DECODE1
 // #define DEBUG_SHOW_POLY_DATA_DECODE2
 #define DEBUG_SHOW_POLY_PTS
 
-#define MAX_FLOAT_PREC qPow(2.0, 24.0) // 2^24: recision limit of float
-#define GARMIN_DEG(x) ((x) < 0x800000 ? (qreal)(x) * 360.0 / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * 360.0 / MAX_FLOAT_PREC)
+// 1 garmin unit = 360 / MAX_FLOAT_PREC
+
+#define D180 180
+#define MAX_FLOAT_PREC qPow(2.0, 24.0)
+#define GARMIN_DEG(x) ((x) < 0x800000 ? (qreal)(x) * (2 * D180) / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * (2 * D180) / MAX_FLOAT_PREC)
 #define GARMIN_RAD(x) ((x) < 0x800000 ? (qreal)(x) * (2 * M_PI) / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * (2 * M_PI) / MAX_FLOAT_PREC)
 
 #define gar_endian(t, x) (t)(x) // little endian platform: just return the argument
@@ -432,18 +435,19 @@ public:
 
   quint32 decode1(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData)
   {
+    // if (pData[3] & 0x80)
+    // {
+    //   hasSubType = true;
+    //   qDebug() << "hasSubType:" << printHex(pData, sizeof(pData) + 1);
+    // }
     type = (quint16)(*pData) << 8;
-    quint8 subtype = (quint8)(pData[3]);
 
     ++pData;
 
     lbl_ptr = gar_ptr_load(uint24_t, pData);
 
-    // hasSubType = lbl_ptr & 0x00800000;
-    if (subtype & 0x80)
-    {
-      hasSubType = true;
-    }
+    hasSubType = lbl_ptr & 0x00800000;
+    // hasSubType = lbl_ptr & 0x00000080;
     isLbl6 = lbl_ptr & 0x00400000;
     lbl_ptr = lbl_ptr & 0x003FFFFF;
 
@@ -460,8 +464,10 @@ public:
 
     if (hasSubType)
     {
-      auto st = pData[0];
-      qDebug() << "hasSubType:" << st;
+      // auto st = pData[0];
+      // qDebug() << "hasSubType st:" ;
+      // qDebug() << "hasSubType:" << printHex(pData, sizeof(pData) + 1) << printHex(&st, 1);
+
       type |= *pData;
       return 9;
     }
@@ -527,6 +533,7 @@ public:
   quint32 lbl_ptr = 0xFFFFFFFF;
 };
 
+// чете битшифта
 class CShiftReg
 {
 public:
@@ -704,7 +711,7 @@ public:
   quint32 decode1(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8 *pData, const quint8 *pEnd)
   {
     QString rawData = printHex(pData, sizeof(pData));
-    QString rawData2 = printHex(pEnd, sizeof(pEnd));
+    QString rawDataEnd = printHex(pEnd, sizeof(pEnd));
     quint32 bytes_total = 10;
     bool two_byte_len;  // bitstream has a two byte length
     bool extra_bit;     // coordinates use extra bit - ??? have never seen it
@@ -728,18 +735,23 @@ public:
 
         bit 7       bitstream_len is two bytes (true)
      */
+    // qDebug() << "OPAAAA:" << printHex(pData, sizeof(pData));
     type = *pData++;
 
-    two_byte_len = type & 0x80;
+    // тука трябва да има и подтипове
     if (line)
     {
+      // @fixme: ne raboti prabvilno kogato imame subtype ili extended type 0x100+
+      qDebug() << "direction/type" << rawData;
       direction = (type & 0x40);
       type &= 0x3F;
+      //     type = 0x10000 + type + (subtype & 0x1F);
     }
     else
     {
       type &= 0x7F;
     }
+    two_byte_len = type & 0x80;
 
     /* label info
         bit 0..21   off set into LBL section
@@ -775,6 +787,8 @@ public:
 #endif
       bytes_total += bs_len;
     }
+    len = bs_len;
+    // qDebug() << "bs_len:" << bs_len;
 
     if (pEnd && ((pStart + bytes_total) > pEnd))
     {
@@ -790,8 +804,7 @@ public:
     // if(extra_bit) qWarning("extrabit");
 
 #ifdef DEBUG_SHOW_POLY_DATA_DECODE1
-    qDebug()
-        << "type:      " << type << Qt::hex;
+    qDebug() << "type:      " << type << Qt::hex;
     qDebug() << "two byte:  " << two_byte_len;
     qDebug() << "extra bit: " << extra_bit;
     qDebug() << "dLng:      " << dLng;
@@ -835,6 +848,7 @@ public:
 
       coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
     }
+    // qDebug() << "maxVecSize:" << maxVecSize << "|" << coords.size() << "| len:" << len << "| extra_bit:" << extra_bit << "| sinfo.x_has_sign:" << signinfo.x_has_sign;
 
     if (maxVecSize < coords.size())
     {
@@ -999,6 +1013,7 @@ public:
   QStringList labels;
   inline static quint32 cnt = 0;
   inline static qint32 maxVecSize = 0;
+  quint16 len = 0;
 
 private:
   void bits_per_coord(quint8 base, quint8 bfirst, quint32 &bx, quint32 &by, sign_info_t &signinfo, bool isVer2)
@@ -1176,6 +1191,10 @@ public:
       of.write(codec->fromUnicode(slPois.join("\n")));
       of.write(codec->fromUnicode(slPolylines.join("\n")));
       of.write(codec->fromUnicode(slPolygons.join("\n")));
+      of.write(codec->fromUnicode(slPoints2.join("\n")));
+      of.write(codec->fromUnicode(slPois2.join("\n")));
+      of.write(codec->fromUnicode(slPolylines2.join("\n")));
+      of.write(codec->fromUnicode(slPolygons2.join("\n")));
       of.flush();
     }
     catch (const exce_t &e)
@@ -1260,169 +1279,175 @@ private:
   // Garmin IMG file header structure, to the start of the FAT blocks
   struct hdr_img_t
   {
-    quint8 xorByte;                        // 0x00000000
-    quint8 byte0x00000001_0x0000000F[15];  //
-    char signature[7];                     // 0x00000010 .. 0x00000016
-    quint8 byte0x00000017_0x00000040[42];  //
-    char identifier[7];                    // 0x00000041 .. 0x00000047
-    quint8 byte0x00000048;                 //
-    char desc1[20];                        // 0x00000049 .. 0x0000005C
-    quint8 byte0x0000005D_0x00000060[4];   //
-    quint8 e1;                             // 0x00000061
-    quint8 e2;                             // 0x00000062
-    quint8 byte0x00000063_0x00000064[2];   //
-    char desc2[31];                        // 0x00000065 .. 0x00000083
-    quint8 byte0x00000084_0x0000040B[904]; //
-    quint32 dataoffset;                    // 0x0000040C .. 0x0000040F
-    quint8 byte0x00000410_0x0000041F[16];  //
-    quint16 blocks[240];                   // 0x00000420 .. 0x000005FF
-
+    quint8 xorByte;                // 0x0000
+    quint8 byte0x0001_0x000F[15];  //
+    char signature[7];             // 0x0010..0x0016
+    quint8 byte0x0017_0x0040[42];  //
+    char identifier[7];            // 0x0041..0x0047
+    quint8 byte0x0048;             //
+    char desc1[20];                // 0x0049..0x005C
+    quint8 byte0x005D_0x0060[4];   //
+    quint8 e1;                     // 0x0061
+    quint8 e2;                     // 0x0062
+    quint8 byte0x0063_0x0064[2];   //
+    char desc2[31];                // 0x0065..0x0083
+    quint8 byte0x0084_0x040B[904]; //
+    quint32 dataoffset;            // 0x040C..0x040F
+    quint8 byte0x0410_0x041F[16];  //
+    quint16 blocks[240];           // 0x0420..0x05FF
     quint32 blocksize() { return 1 << (e1 + e2); }
   };
   struct FATblock_t
   {
-    quint8 flag;                          // 0x00000000
-    char name[8];                         // 0x00000001 .. 0x00000008
-    char type[3];                         // 0x00000009 .. 0x0000000B
-    quint32 size;                         // 0x0000000C .. 0x0000000F
-    quint16 part;                         // 0x00000010 .. 0x00000011
-    quint8 byte0x00000012_0x0000001F[14]; //
-    quint16 blocks[240];                  // 0x00000020 .. 0x000001FF
+    quint8 flag;                  // 0x0000
+    char name[8];                 // 0x0001..0x0008
+    char type[3];                 // 0x0009..0x000B
+    quint32 size;                 // 0x000C..0x000F
+    quint16 part;                 // 0x0010..0x0011
+    quint8 byte0x0012_0x001F[14]; //
+    quint16 blocks[240];          // 0x0020..0x01FF
   };
 
   // common header of the RGN, TRE, LBL, NET, ... parts of the IMG file
   struct hdr_subfile_part_t
   {
-    quint16 length;                      // 0x00000000 .. 0x00000001
-    char type[10];                       // 0x00000002 .. 0x0000000B
-    quint8 byte0x0000000C;               //
-    quint8 flag;                         // 0x0000000D
-    quint8 byte0x0000000E_0x00000014[7]; //
+    quint16 length;              // 0x0000..0x0001
+    char type[10];               // 0x0002..0x000B
+    quint8 byte0x000C;           //
+    quint8 flag;                 // 0x000D
+    quint8 byte0x000E_0x0014[7]; //
   };
 
-  // TRE part header, to 0xB7
+  // TRE part header
   struct hdr_tre_t : public hdr_subfile_part_t
   {
-    quint24 northbound;                   // 0x00000015 .. 0x00000017
-    quint24 eastbound;                    // 0x00000018 .. 0x0000001A
-    quint24 southbound;                   // 0x0000001B .. 0x0000001D
-    quint24 westbound;                    // 0x0000001E .. 0x00000020
-    quint32 tre1_offset;                  // 0x00000021 .. 0x00000024
-    quint32 tre1_size;                    // 0x00000025 .. 0x00000028
-    quint32 tre2_offset;                  // 0x00000029 .. 0x0000002C
-    quint32 tre2_size;                    // 0x0000002D .. 0x00000030
-    quint32 tre3_offset;                  // 0x00000031 .. 0x00000034
-    quint32 tre3_size;                    // 0x00000035 .. 0x00000038
-    quint16 tre3_rec_size;                // 0x00000039 .. 0x0000003A
-    quint8 byte0x0000003B_0x0000003E[4];  //
-    quint8 POI_flags;                     // 0x0000003F
-    quint8 byte0x00000040_0x00000049[10]; //
-    quint32 tre4_offset;                  // 0x0000004A .. 0x0000004D
-    quint32 tre4_size;                    // 0x0000004E .. 0x00000051
-    quint16 tre4_rec_size;                // 0x00000052 .. 0x00000053
-    quint8 byte0x00000054_0x00000057[4];  //
-    quint32 tre5_offset;                  // 0x00000058 .. 0x0000005B
-    quint32 tre5_size;                    // 0x0000005C .. 0x0000005F
-    quint16 tre5_rec_size;                // 0x00000060 .. 0x00000061
-    quint8 byte0x00000062_0x00000065[4];  //
-    quint32 tre6_offset;                  // 0x00000066 .. 0x00000069
-    quint32 tre6_size;                    // 0x0000006A .. 0x0000006D
-    quint16 tre6_rec_size;                // 0x0000006E .. 0x0000006F
-    quint8 byte0x00000070_0x00000073[4];  //
-    quint8 byte0x00000074_0x0000007B[8];  //
-    quint32 tre7_offset;                  // 0x0000007C .. 0x0000007F
-    quint32 tre7_size;                    // 0x00000080 .. 0x00000083
-    quint16 tre7_rec_size;                // 0x00000084 .. 0x00000085
-    quint8 byte0x00000086_0x00000089[4];  //
-    quint32 tre8_offset;                  // 0x0000008A .. 0x0000008D
-    quint32 tre8_size;                    // 0x0000008E .. 0x00000091
-    quint16 tre8_rec_size;                // 0x00000092 .. 0x00000093
-    quint16 polyl2_types_num;             // 0x00000094 .. 0x00000095
-    quint16 polyg2_types_num;             // 0x00000096 .. 0x00000097
-    quint16 poi2_types_num;               // 0x00000098 .. 0x00000099
-    quint8 key[20];                       // 0x0000009A .. 0x000000AD
-    quint32 tre9_offset;                  // 0x000000AE .. 0x000000B1
-    quint32 tre9_size;                    // 0x000000B2 .. 0x000000B5
-    quint16 tre9_rec_size;                // 0x000000B6 .. 0x000000B7
+    quint24 northbound;           // 0x0015..0x0017
+    quint24 eastbound;            // 0x0018..0x001A
+    quint24 southbound;           // 0x001B..0x001D
+    quint24 westbound;            // 0x001E..0x0020
+    quint32 tre1_offset;          // 0x0021..0x0024
+    quint32 tre1_size;            // 0x0025..0x0028
+    quint32 tre2_offset;          // 0x0029..0x002C
+    quint32 tre2_size;            // 0x002D..0x0030
+    quint32 tre3_offset;          // 0x0031..0x0034
+    quint32 tre3_size;            // 0x0035..0x0038
+    quint16 tre3_rec_size;        // 0x0039..0x003A
+    quint8 byte0x003B_0x003E[4];  //
+    quint8 POI_flags;             // 0x003F
+    quint8 byte0x0040_0x0049[10]; //
+    quint32 tre4_offset;          // 0x004A..0x004D
+    quint32 tre4_size;            // 0x004E..0x0051
+    quint16 tre4_rec_size;        // 0x0052..0x0053
+    quint8 byte0x0054_0x0057[4];  //
+    quint32 tre5_offset;          // 0x0058..0x005B
+    quint32 tre5_size;            // 0x005C..0x005F
+    quint16 tre5_rec_size;        // 0x0060..0x0061
+    quint8 byte0x0062_0x0065[4];  //
+    quint32 tre6_offset;          // 0x0066..0x0069
+    quint32 tre6_size;            // 0x006A..0x006D
+    quint16 tre6_rec_size;        // 0x006E..0x006F
+    quint8 byte0x0070_0x0073[4];  //
+    quint8 byte0x0074_0x007B[8];  //
+    quint32 tre7_offset;          // 0x007C..0x007F
+    quint32 tre7_size;            // 0x0080..0x0083
+    quint16 tre7_rec_size;        // 0x0084..0x0085
+    quint8 byte0x0086_0x0089[4];  //
+    quint32 tre8_offset;          // 0x008A..0x008D
+    quint32 tre8_size;            // 0x008E..0x0091
+    quint16 tre8_rec_size;        // 0x0092..0x0093
+    quint16 polyl2_types_num;     // 0x0094..0x0095
+    quint16 polyg2_types_num;     // 0x0096..0x0097
+    quint16 poi2_types_num;       // 0x0098..0x0099
+    quint8 key[20];               // 0x009A..0x00AD
+    quint32 tre9_offset;          // 0x00AE..0x00B1
+    quint32 tre9_size;            // 0x00B2..0x00B5
+    quint16 tre9_rec_size;        // 0x00B6..0x00B7
   };
 
   // RGN part header
   struct hdr_rgn_t : public hdr_subfile_part_t
   {
-    quint32 offset;                       // 0x00000015 .. 0x00000018
-    quint32 length;                       // 0x00000019 .. 0x0000001C
-    quint32 offset_polyg2;                // 0x0000001D .. 0x00000020
-    quint32 length_polyg2;                // 0x00000021 .. 0x00000024
-    quint8 byte0x00000025_0x00000038[20]; //
-    quint32 offset_polyl2;                // 0x00000039 .. 0x0000003C
-    quint32 length_polyl2;                // 0x0000003D .. 0x00000040
-    quint8 byte0x00000041_0x00000054[20]; //
-    quint32 offset_point2;                // 0x00000055 .. 0x00000058
-    quint32 length_point2;                // 0x00000059 .. 0x0000005C
+    quint32 offset;               // 0x0015..0x0018
+    quint32 length;               // 0x0019..0x001C
+    quint32 offset_polyg2;        // 0x001D..0x0020
+    quint32 length_polyg2;        // 0x0021..0x0024
+    quint8 byte0x0025_0x0038[20]; //
+    quint32 offset_polyl2;        // 0x0039..0x003C
+    quint32 length_polyl2;        // 0x003D..0x0040
+    quint8 byte0x0041_0x0054[20]; //
+    quint32 offset_point2;        // 0x0055..0x0058
+    quint32 length_point2;        // 0x0059..0x005C
   };
 
   // LBL part header
   struct hdr_lbl_t : public hdr_subfile_part_t
   {
-    quint32 lbl1_offset;                 // 0x00000015 .. 0x00000018
-    quint32 lbl1_length;                 // 0x00000019 .. 0x0000001C
-    quint8 addr_shift;                   // 0x0000001D
-    quint8 coding;                       // 0x0000001E
-    quint32 lbl2_offset;                 // 0x0000001F .. 0x00000022
-    quint32 lbl2_length;                 // 0x00000023 .. 0x00000026
-    quint16 lbl2_rec_size;               // 0x00000027 .. 0x00000028
-    quint8 byte0x00000029_0x0000002C[4]; //
-    quint32 lbl3_offset;                 // 0x0000002D .. 0x00000030
-    quint32 lbl3_length;                 // 0x00000031 .. 0x00000034
-    quint16 lbl3_rec_size;               // 0x00000035 .. 0x00000036
-    quint8 byte0x00000037_0x0000003A[4]; //
-    quint32 lbl4_offset;                 // 0x0000003B .. 0x0000003E
-    quint32 lbl4_length;                 // 0x0000003F .. 0x00000042
-    quint16 lbl4_rec_size;               // 0x00000043 .. 0x00000044
-    quint8 byte0x00000045_0x00000048[4]; //
-    quint32 lbl5_offset;                 // 0x00000049 .. 0x0000004C
-    quint32 lbl5_length;                 // 0x0000004D .. 0x00000050
-    quint16 lbl5_rec_size;               // 0x00000051 .. 0x00000052
-    quint8 byte0x00000053_0x00000056[4]; //
-    quint32 lbl6_offset;                 // 0x00000057 .. 0x0000005A
-    quint32 lbl6_length;                 // 0x0000005B .. 0x0000005E
-    quint8 lbl6_addr_shift;              // 0x0000005F
-    quint8 lbl6_glob_mask;               // 0x00000060
-    quint8 byte0x00000061_0x00000063[3]; //
-    quint32 lbl7_offset;                 // 0x00000064 .. 0x00000067
-    quint32 lbl7_length;                 // 0x00000068 .. 0x0000006B
-    quint16 lbl7_rec_size;               // 0x0000006C .. 0x0000006D
-    quint8 byte0x0000006E_0x00000071[4]; //
-    quint32 lbl8_offset;                 // 0x00000072 .. 0x00000075
-    quint32 lbl8_length;                 // 0x00000076 .. 0x00000079
-    quint16 lbl8_rec_size;               // 0x0000007A .. 0x0000007B
-    quint8 byte0x0000007C_0x0000007F[4]; //
-    quint32 lbl9_offset;                 // 0x00000080 .. 0x00000083
-    quint32 lbl9_length;                 // 0x00000084 .. 0x00000087
-    quint16 lbl9_rec_size;               // 0x00000088 .. 0x00000089
-    quint8 byte0x0000008A_0x0000008D[4]; //
-    quint32 lbl10_offset;                // 0x0000008E .. 0x00000091
-    quint32 lbl10_length;                // 0x00000092 .. 0x00000095
-    quint16 lbl10_rec_size;              // 0x00000096 .. 0x00000097
-    quint8 byte0x00000098_0x0000009B[4]; //
-    quint32 lbl11_offset;                // 0x0000009C .. 0x0000009F
-    quint32 lbl11_length;                // 0x000000A0 .. 0x000000A3
-    quint16 lbl11_rec_size;              // 0x000000A4 .. 0x000000A5
-    quint8 byte0x000000A6_0x000000A9[4]; //
-    quint16 codepage;                    // 0x000000AA .. 0x000000AB
+    quint32 lbl1_offset;         // 0x0015..0x0018
+    quint32 lbl1_length;         // 0x0019..0x001C
+    quint8 addr_shift;           // 0x001D
+    quint8 coding;               // 0x001E
+    quint32 lbl2_offset;         // 0x001F..0x0022
+    quint32 lbl2_length;         // 0x0023..0x0026
+    quint16 lbl2_rec_size;       // 0x0027..0x0028
+    quint8 byte0x0029_0x002C[4]; //
+    quint32 lbl3_offset;         // 0x002D..0x0030
+    quint32 lbl3_length;         // 0x0031..0x0034
+    quint16 lbl3_rec_size;       // 0x0035..0x0036
+    quint8 byte0x0037_0x003A[4]; //
+    quint32 lbl4_offset;         // 0x003B..0x003E
+    quint32 lbl4_length;         // 0x003F..0x0042
+    quint16 lbl4_rec_size;       // 0x0043..0x0044
+    quint8 byte0x0045_0x0048[4]; //
+    quint32 lbl5_offset;         // 0x0049..0x004C
+    quint32 lbl5_length;         // 0x004D..0x0050
+    quint16 lbl5_rec_size;       // 0x0051..0x0052
+    quint8 byte0x0053_0x0056[4]; //
+    quint32 lbl6_offset;         // 0x0057..0x005A
+    quint32 lbl6_length;         // 0x005B..0x005E
+    quint8 lbl6_addr_shift;      // 0x005F
+    quint8 lbl6_glob_mask;       // 0x0060
+    quint8 byte0x0061_0x0063[3]; //
+    quint32 lbl7_offset;         // 0x0064..0x0067
+    quint32 lbl7_length;         // 0x0068..0x006B
+    quint16 lbl7_rec_size;       // 0x006C..0x006D
+    quint8 byte0x006E_0x0071[4]; //
+    quint32 lbl8_offset;         // 0x0072..0x0075
+    quint32 lbl8_length;         // 0x0076..0x0079
+    quint16 lbl8_rec_size;       // 0x007A..0x007B
+    quint8 byte0x007C_0x007F[4]; //
+    quint32 lbl9_offset;         // 0x0080..0x0083
+    quint32 lbl9_length;         // 0x0084..0x0087
+    quint16 lbl9_rec_size;       // 0x0088..0x0089
+    quint8 byte0x008A_0x008D[4]; //
+    quint32 lbl10_offset;        // 0x008E..0x0091
+    quint32 lbl10_length;        // 0x0092..0x0095
+    quint16 lbl10_rec_size;      // 0x0096..0x0097
+    quint8 byte0x0098_0x009B[4]; //
+    quint32 lbl11_offset;        // 0x009C..0x009F
+    quint32 lbl11_length;        // 0x00A0..0x00A3
+    quint16 lbl11_rec_size;      // 0x00A4..0x00A5
+    quint8 byte0x00A6_0x00A9[4]; //
+    quint16 codepage;            // 0x00AA..0x00AB
+    // quint8 byte0x00AC_0x00EB[40]; //
+    // quint32 lbl17_offset;         // 0x00EC..0x00EF
+    // quint32 lbl17_length;         // 0x00F0..0x00F3
+    // quint16 lbl17_rec_size;       // 0x00F4..0x00F5
+    // 0x00EC: map created with cgpsmapper
+    // 0x0108: not for sale
+    // 0x0429: copyright ....
   };
 
   // NET part header
   struct hdr_net_t : public hdr_subfile_part_t
   {
-    quint32 net1_offset;    // 0x00000015 .. 0x00000018
-    quint32 net1_length;    // 0x00000019 .. 0x0000001C
-    quint8 net1_addr_shift; // 0x0000001D
-    quint32 net2_offset;    // 0x0000001E .. 0x00000021
-    quint32 net2_length;    // 0x00000022 .. 0x00000025
-    quint8 net2_addr_shift; // 0x00000026
-    quint32 net3_offset;    // 0x00000027 .. 0x0000002A
-    quint32 net3_length;    // 0x0000002B .. 0x0000002E
+    quint32 net1_offset;    // 0x0015..0x0018
+    quint32 net1_length;    // 0x0019..0x001C
+    quint8 net1_addr_shift; // 0x001D
+    quint32 net2_offset;    // 0x001E..0x0021
+    quint32 net2_length;    // 0x0022..0x0025
+    quint8 net2_addr_shift; // 0x0026
+    quint32 net3_offset;    // 0x0027..0x002A
+    quint32 net3_length;    // 0x002B..0x002E
   };
 
 #define TRE_MAP_LEVEL(r) ((r)->zoom & 0x0f)
@@ -1524,18 +1549,62 @@ private:
   QStringList slPois = QStringList();
   QStringList slPolylines = QStringList();
   QStringList slPolygons = QStringList();
+  QStringList slPoints2 = QStringList();
+  QStringList slPois2 = QStringList();
+  QStringList slPolylines2 = QStringList();
+  QStringList slPolygons2 = QStringList();
 
   QString convPtDegStr(const QPointF &point)
   {
-    return QString("(%1,%2)").arg(qRadiansToDegrees(point.y()), 0, 'f', 5).arg(qRadiansToDegrees(point.x()), 0, 'f', 5);
+    const double y = qRadiansToDegrees(point.y());
+    const double x = qRadiansToDegrees(point.x());
+    if (y < 0 || x < 0)
+    {
+      return "";
+    }
+
+    return QString("(%1,%2)").arg(y, 0, 'f', 5).arg(x, 0, 'f', 5);
   }
 
-  QString convLnDegStr(const QPolygonF &polygon)
+  QString convLnDegStr(const QPolygonF &polygon, quint32 len, bool isLine)
   {
     QStringList resultSl;
+    bool skipLastPoint = false;
+    const int size = polygon.size();
+    if (size >= 2)
+    {
+      quint8 ps = polygon.size();
+      if (polygon[ps - 1] == polygon[ps - 2])
+      {
+        // fix1
+        qDebug() << "BUGGY" << polygon[ps - 1] << "| size:" << size << len;
+        skipLastPoint = true;
+      }
+
+      if (isLine == false && polygon[ps - 1] == polygon[ps - 2])
+      {
+        // fix2
+        qDebug() << "BUGGY: Not a valid polygon (first and last points are different)" << polygon[0] << polygon[size - 1];
+        return "";
+      }
+    }
+    int i = 0;
     for (const QPointF &point : polygon)
     {
-      resultSl << convPtDegStr(point);
+      ++i;
+      if (skipLastPoint && size == i)
+      {
+        break;
+      }
+
+      const QString str = convPtDegStr(point);
+      if (str.length() == 0)
+      {
+        qDebug() << "Wrong data!";
+        return "";
+      }
+
+      resultSl << str;
     }
     return resultSl.join(',');
   }
@@ -1602,7 +1671,7 @@ private:
       {
         if (subdiv.level != level)
         {
-          qDebug() << "Level does not exists (skip):" << level << subdiv.level;
+          // qDebug() << "Level does not exists (skip):" << level << subdiv.level;
           continue;
         }
         loadSubDiv(file, subdiv, subfile.strtbl, rgndata, polylines, polygons, points, pois);
@@ -1614,8 +1683,7 @@ private:
 
   void loadSubDiv(CFileExt &file, const subdiv_desc_t &subdiv, IGarminStrTbl *strtbl, const QByteArray &rgndata, polytype_t &polylines, polytype_t &polygons, pointtype_t &points, pointtype_t &pois)
   {
-    if (subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 &&
-        !subdiv.lengthPoints2)
+    if (subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 && !subdiv.lengthPoints2)
     {
       return;
     }
@@ -1625,8 +1693,10 @@ private:
     polylines.clear();
     polygons.clear();
 
+#ifdef DEBUG_SHOW_POLY_DATA_SUBDIV
     qDebug() << "\n--------- loadSubDiv()" << file.fileName() << "---------";
     qDebug() << " Level:" << subdiv.level << " Area:" << subdiv.area << subdiv.iCenterLat << subdiv.iCenterLng << subdiv.east << subdiv.west << subdiv.north << subdiv.south;
+#endif
 
     const quint8 *pRawData = (quint8 *)rgndata.data();
 
@@ -1895,27 +1965,29 @@ private:
 
     QStringList sl = QStringList();
 
-    qDebug() << "total points:" << points.length();
+    // qDebug() << "total points:" << points.length();
 
     int count = 0;
     for (const CGarminPoint &pt : points)
     {
+      QStringList tmpPoints;
       ++count;
-      // sl << QString("[POINT] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) << "Type=0x" + QString::number(pt.type, 16);
-      slPoints << QString("[POI] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) << "Type=0x" + QString::number(pt.type, 16);
+      // tmpPoints << QString("[POINT] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) << "Type=0x" + QString::number(pt.type, 16);
+      // tmpPoints << QString("[POI] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) << "Type=0x" + QString::number(pt.type, 16);
+      tmpPoints << QString("[POI]") << "Type=0x" + QString::number(pt.type, 16);
 
       int i = 0;
       if (pt.hasLabel())
       {
         if (pt.labels.size() > 0 && pt.labels.length() == 1)
         {
-          slPoints << QString("Label=%1").arg(pt.labels.at(0));
+          tmpPoints << QString("Label=%1").arg(pt.labels.at(0));
         }
         else
         {
           for (const QString &l : pt.labels)
           {
-            slPoints << QString("Label%1=%2").arg(i).arg(l);
+            tmpPoints << QString("Label%1=%2").arg(i).arg(l);
             ++i;
           }
         }
@@ -1923,31 +1995,41 @@ private:
 
       if (!pt.pos.isNull())
       {
-        slPoints << QString("Data%1=%2").arg(subdiv.level).arg(convPtDegStr(pt.pos));
+        tmpPoints << QString("Data%1=%2").arg(subdiv.level).arg(convPtDegStr(pt.pos));
       }
-      slPoints << "[END]" << "\n";
+      tmpPoints << "[END]\n";
+      if (pt.type < 0x10000)
+      {
+        slPoints << tmpPoints.join("\n");
+      }
+      else
+      {
+        slPoints2 << tmpPoints.join("\n");
+      }
     }
     slPoints << "\n";
 
     count = 0;
-    qDebug() << "total pois : " << pois.length();
+    // qDebug() << "total pois : " << pois.length();
     for (const CGarminPoint &poi : pois)
     {
+      QStringList tmpPois;
       ++count;
-      slPois << QString("[POI] ; subdiv=%1 | level=%2 | count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(poi.type, 16);
+      // tmpPois << QString("[POI] ; subdiv=%1 | level=%2 | count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(poi.type, 16);
+      tmpPois << QString("[POI]") << "Type=0x" + QString::number(poi.type, 16);
 
       int i = 0;
       if (poi.hasLabel())
       {
         if (poi.labels.length() == 1)
         {
-          slPois << QString("Label=%1").arg(poi.labels.at(0));
+          tmpPois << QString("Label=%1").arg(poi.labels.at(0));
         }
         else
         {
           for (const QString &l : poi.labels)
           {
-            slPois << QString("Label%1=%2").arg(i).arg(l);
+            tmpPois << QString("Label%1=%2").arg(i).arg(l);
             ++i;
           }
         }
@@ -1955,31 +2037,54 @@ private:
 
       if (!poi.pos.isNull())
       {
-        slPois << QString("Data%1=%2").arg(subdiv.level).arg(convPtDegStr(poi.pos));
+        const QString str = convPtDegStr(poi.pos);
+        if (str.length())
+        {
+          tmpPois << QString("Data%1=%2").arg(subdiv.level).arg(str);
+        }
+        else
+        {
+          qDebug() << "BROKEN DATA";
+        }
       }
-      slPois << "[END]" << "\n";
+      tmpPois << "[END]\n";
+      if (poi.type < 0x10000)
+      {
+        slPois << tmpPois.join("\n");
+      }
+      else
+      {
+        slPois2 << tmpPois.join("\n");
+      }
     }
     slPois << "\n";
 
     count = 0;
-    qDebug() << "total polylines:" << polylines.length();
+    // qDebug() << "total polylines:" << polylines.length();
     for (const CGarminPolygon &ln : polylines)
     {
+      QStringList tmpPolylines;
       ++count;
-      slPolylines << QString("[POLYLINE] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=?").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(ln.type, 16);
+      // tmpPolylines << QString("[POLYLINE] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=?").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(ln.type, 16);
+      tmpPolylines << QString("[POLYLINE]") << "Type=0x" + QString::number(ln.type, 16);
+
+      if (ln.direction)
+      {
+        tmpPolylines << "DirIndicator=1";
+      }
 
       int i = 0;
       if (ln.hasLabel())
       {
         if (ln.labels.length() == 1)
         {
-          slPolylines << QString("Label=%1").arg(ln.labels.at(0));
+          tmpPolylines << QString("Label=%1").arg(ln.labels.at(0));
         }
         else
         {
           for (const QString &l : ln.labels)
           {
-            slPolylines << QString("Label%1=%2").arg(i).arg(l);
+            tmpPolylines << QString("Label%1=%2").arg(i).arg(l);
             ++i;
           }
         }
@@ -1987,31 +2092,41 @@ private:
 
       if (ln.coords.size() > 0)
       {
-        slPolylines << QString("Data%1=%2").arg(subdiv.level).arg(convLnDegStr(ln.coords));
+        tmpPolylines << QString("Data%1=%2").arg(subdiv.level).arg(convLnDegStr(ln.coords, ln.len, true));
       }
-      slPolylines << "[END]" << "\n";
+      tmpPolylines << "[END]\n";
+      if (ln.type < 0x10000)
+      {
+        slPolylines << tmpPolylines.join("\n");
+      }
+      else
+      {
+        slPolylines2 << tmpPolylines.join("\n");
+      }
     }
     slPolylines << "\n";
 
     count = 0;
-    qDebug() << "total polygons:" << polygons.length();
+    // qDebug() << "total polygons:" << polygons.length();
     for (const CGarminPolygon &pg : polygons)
     {
+      QStringList tmpPolygons;
       ++count;
-      slPolygons << QString("[POLYGON] ; subdiv=%1 | level=%2 | count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(pg.type, 16);
+      // tmpPolygons << QString("[POLYGON] ; subdiv=%1 | level=%2 | count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(pg.type, 16);
+      tmpPolygons << QString("[POLYGON]") << "Type=0x" + QString::number(pg.type, 16);
 
       int i = 0;
       if (pg.hasLabel())
       {
         if (pg.labels.length() == 1)
         {
-          slPolygons << QString("Label=%1").arg(pg.labels.at(0));
+          tmpPolygons << QString("Label=%1").arg(pg.labels.at(0));
         }
         else
         {
           for (const QString &l : pg.labels)
           {
-            slPolygons << QString("Label%1=%2").arg(i).arg(l);
+            tmpPolygons << QString("Label%1=%2").arg(i).arg(l);
             ++i;
           }
         }
@@ -2019,9 +2134,17 @@ private:
 
       if (pg.coords.size() > 0)
       {
-        slPolygons << QString("Data%1=%2").arg(subdiv.level).arg(convLnDegStr(pg.coords));
+        tmpPolygons << QString("Data%1=%2").arg(subdiv.level).arg(convLnDegStr(pg.coords, pg.len, false));
       }
-      slPolygons << "[END]" << "\n";
+      tmpPolygons << "[END]\n";
+      if (pg.type < 0x10000)
+      {
+        slPolygons << tmpPolygons.join("\n");
+      }
+      else
+      {
+        slPolygons2 << tmpPolygons.join("\n");
+      }
     }
     slPolygons << "\n";
   }
@@ -2420,8 +2543,7 @@ private:
       ++pSubDivL;
       ++subdiv;
     }
-    subdivs.last().rgn_end =
-        gar_load(quint32, pRgnHdr->hdr_rgn_t::offset) + gar_load(quint32, pRgnHdr->hdr_rgn_t::length);
+    subdivs.last().rgn_end = gar_load(quint32, pRgnHdr->hdr_rgn_t::offset) + gar_load(quint32, pRgnHdr->hdr_rgn_t::length);
 
     // read extended NT elements
     if ((gar_load(uint16_t, pTreHdr->hdr_subfile_part_t::length) >= 0x9A) && pTreHdr->tre7_size &&
@@ -2528,6 +2650,13 @@ private:
       quint32 offsetLbl1 = subfile.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl1_offset);
       quint32 offsetLbl6 = subfile.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl6_offset);
 
+      // debug label...
+      // qDebug() << "LABEL1:" << Qt::hex << pLblHdr->lbl1_offset << pLblHdr->lbl1_length << offsetLbl1;
+      // qDebug() << "LABEL2:" << Qt::hex << pLblHdr->lbl2_offset << pLblHdr->lbl2_length;
+      // qDebug() << "LABEL3:" << Qt::hex << pLblHdr->lbl3_offset << pLblHdr->lbl3_length;
+      // qDebug() << "LABEL4:" << Qt::hex << pLblHdr->lbl4_offset << pLblHdr->lbl4_length;
+      // qDebug() << "LABEL5:" << Qt::hex << pLblHdr->lbl5_offset << pLblHdr->lbl5_length;
+
       QByteArray nethdr;
       quint32 offsetNet1 = 0;
       hdr_net_t *pNetHdr = nullptr;
@@ -2549,24 +2678,27 @@ private:
         mCodePage = QString("%1").arg(codepage);
       }
 
-      qDebug() << file.fileName() << Qt::hex << offsetLbl1 << offsetLbl6 << offsetNet1;
+      // qDebug() << file.fileName() << Qt::hex << offsetLbl1 << offsetLbl6 << offsetNet1;
 
       QObject *obj = qobject_cast<QObject *>(this);
       switch (pLblHdr->coding)
       {
-      case 0x06:
+      case 0x06: // ascii
         subfile.strtbl = new CGarminStrTbl6(codepage, mask, obj);
         mCoding = QString("%1").arg(pLblHdr->coding);
         break;
 
-      case 0x09: // utf-8
-      case 0x0A: // utf-10?
+      case 0x09: // cp0, latin1, cp1251, cp1252
         subfile.strtbl = new CGarminStrTblUtf8(codepage, mask, obj);
         mCoding = QString("%1").arg(pLblHdr->coding);
         break;
 
+      case 0x0A: // cp65001, unicode, cp932, ms932
+        qWarning() << "Not implemented:" << Qt::hex << pLblHdr->coding;
+        break;
+
       default:
-        qWarning() << "Unknown label coding" << Qt::hex << pLblHdr->coding;
+        qWarning() << "Unknown label coding:" << Qt::hex << pLblHdr->coding;
       }
 
       if (nullptr != subfile.strtbl)
