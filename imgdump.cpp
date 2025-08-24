@@ -8,14 +8,14 @@
 #include <QCommandLineParser>
 #include <QCommandLineOption>
 
-#define DEBUG_SHOW_SECT_DESC
-#define DEBUG_SHOW_MAPLEVEL_DATA
+// #define DEBUG_SHOW_SECT_DESC
+// #define DEBUG_SHOW_MAPLEVEL_DATA
 // #define DEBUG_SHOW_SUBDIV_DATA
-#define DEBUG_SHOW_MAPLEVELS
+// #define DEBUG_SHOW_MAPLEVELS
 // #define DEBUG_SHOW_POLY_DATA_SUBDIV
 // #define DEBUG_SHOW_POLY_DATA_DECODE
 // #define DEBUG_SHOW_POLY_DATA_DECODE_EX
-#define DEBUG_SHOW_POLY_PTS
+// #define DEBUG_SHOW_POLY_PTS
 // #define DEBUG_WRITE_TO_OUTPUT
 
 // 1 garmin unit = 360 / MAX_FLOAT_PREC
@@ -102,7 +102,7 @@ public:
       }
       else
       {
-        qDebug() << "unknown codepage:" << codepage << "0x" << Qt::hex << codepage;
+        qDebug() << "Unknown codepage:" << codepage << "0x" << Qt::hex << codepage;
         codec = QTextCodec::codecForName("Latin1");
       }
     }
@@ -481,7 +481,7 @@ public:
     quint32 byte_size = 6;
     quint8 subtype;
 
-    qDebug() << "FIXME:" << printHex(pData, 4);
+    // qDebug() << "FIXME:" << printHex(pData, 4);
 
     // @todo: fixme: if (lbl3 & 0x80) == 128 -> contains a subtype
     // This is where Mechalas is incorrect: it is not the bit 8 of first byte, but bit 8 of the 4th byte
@@ -1185,14 +1185,14 @@ public:
         }
       }
 
-      of.write(codec->fromUnicode(slPoints.join("\n")));
-      of.write(codec->fromUnicode(slPois.join("\n")));
-      of.write(codec->fromUnicode(slPolylines.join("\n")));
-      of.write(codec->fromUnicode(slPolygons.join("\n")));
-      of.write(codec->fromUnicode(slPoints2.join("\n")));
-      of.write(codec->fromUnicode(slPois2.join("\n")));
-      of.write(codec->fromUnicode(slPolylines2.join("\n")));
-      of.write(codec->fromUnicode(slPolygons2.join("\n")));
+      of.write(codec->fromUnicode(slPoints.join("\n")) + "\n");
+      of.write(codec->fromUnicode(slPois.join("\n")) + "\n");
+      of.write(codec->fromUnicode(slPolylines.join("\n")) + "\n");
+      of.write(codec->fromUnicode(slPolygons.join("\n")) + "\n");
+      of.write(codec->fromUnicode(slPoints2.join("\n")) + "\n");
+      of.write(codec->fromUnicode(slPois2.join("\n")) + "\n");
+      of.write(codec->fromUnicode(slPolylines2.join("\n")) + "\n");
+      of.write(codec->fromUnicode(slPolygons2.join("\n")) + "\n");
       of.flush();
     }
     catch (const exce_t &e)
@@ -1426,10 +1426,6 @@ private:
     quint16 lbl11_rec_size;      // 0x00A4..0x00A5
     quint8 byte0x00A6_0x00A9[4]; //
     quint16 codepage;            // 0x00AA..0x00AB
-    // quint8 byte0x00AC_0x00EB[40]; //
-    // quint32 lbl17_offset;         // 0x00EC..0x00EF
-    // quint32 lbl17_length;         // 0x00F0..0x00F3
-    // quint16 lbl17_rec_size;       // 0x00F4..0x00F5
     // 0x00EC: map created with cgpsmapper
     // 0x0108: not for sale
     // 0x0429: copyright ....
@@ -1561,27 +1557,6 @@ private:
   int tatalLnFailed = 0;
   int tatalPgFailed = 0;
 
-  // QString roundStandard(double value, int precision)
-  // {
-  //   double factor = std::pow(10, precision);
-  //   // Стандартно закръгляване (round half up)
-  //   double rounded = std::round(value * factor) / factor;
-  //   return QString::number(rounded, 'f', precision);
-  // }
-
-  // QString formatRoundedUp(double value, int precision)
-  // {
-  //   double factor = std::pow(10, precision);
-  //   double rounded = std::ceil(value * factor) / factor;
-  //   return QString::number(rounded, 'f', precision);
-  // }
-
-  // inline double roundUp(double value, int decimals)
-  // {
-  //   double factor = std::pow(10, decimals);
-  //   return std::ceil(value * factor) / factor;
-  // }
-
   QString roundToDigits(double value, int precision, int cut)
   {
     QString temp = QString::number(value, 'f', precision);
@@ -1597,74 +1572,51 @@ private:
   {
     const double y = qRadiansToDegrees(point.y());
     const double x = qRadiansToDegrees(point.x());
-    if (y < 41.0 || x < 21.0)
-    {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      return QString("; Possibly bitstream error (y < 41.0 || x < 21.0) x:%1 y:%2").arg(x).arg(y);
-#else
-      return "";
-#endif
-    }
-    if (y > 45.0 || x > 27.0)
-    {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      return QString("; Possibly bitstream error (y > 45.0 || x > 27.0) x:%1 y:%2").arg(x).arg(y);
-#else
-      return "";
-#endif
-    }
+    //     if (y < 41.0 || x < 21.0)
+    //     {
+    // #ifdef DEBUG_WRITE_TO_OUTPUT
+    //       return QString("; Possibly bitstream error (y < 41.0 || x < 21.0) x:%1 y:%2").arg(x).arg(y);
+    // #else
+    //       return "";
+    // #endif
+    //     }
+    //     if (y > 45.0 || x > 27.0)
+    //     {
+    // #ifdef DEBUG_WRITE_TO_OUTPUT
+    //       return QString("; Possibly bitstream error (y > 45.0 || x > 27.0) x:%1 y:%2").arg(x).arg(y);
+    // #else
+    //       return "";
+    // #endif
+    //     }
 
+    // return QString("%1(%2,%3)").arg(level == -1 ? "" : QString("Data%1=").arg(level)).arg(roundToDigits(y, 5, 3)).arg(roundToDigits(x, 5, 3));
     // return QString("%1(%2,%3)").arg(level == -1 ? "" : QString("Data%1=").arg(level)).arg(roundToDigits(y, 5, 4)).arg(roundToDigits(x, 5, 4));
     return QString("%1(%2,%3)").arg(level == -1 ? "" : QString("Data%1=").arg(level)).arg(y, 0, 'f', 5).arg(x, 0, 'f', 5);
   }
 
-  QString convLnDegStr(const QPolygonF &polygon, quint32 level, quint32 len, bool isLine)
+  QString convLnDegStr(const QPolygonF &polyline, quint32 level, quint32 len, bool isLine)
   {
     QStringList errorSl;
     QStringList resultSl;
-    bool skipLastPoint = false;
-    const int size = polygon.size();
-    if (size > 1)
-    {
-      quint8 ps = polygon.size();
-      if (polygon[ps - 1] == polygon[ps - 2])
-      {
-        skipLastPoint = true;
-      }
-    }
 
-    if (isLine == true)
-    {
-      if ((skipLastPoint == true && size < 3) || (skipLastPoint == false && size < 2))
-      {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-        return "; No sense: polyline with length lower then 2 points";
-#else
-        return "";
-#endif
-      }
-    }
-    else
-    {
-      if (size < 3) // 4?
-      {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-        return "; No sense: polygon with length lower then 3 points";
-#endif
-      }
-    }
+    QPointF pointFirst;
+    QPointF pointPrev;
 
-    int i = 0;
-    for (const QPointF &point : polygon)
+    for (const QPointF &point : polyline)
     {
-      ++i;
-      if (skipLastPoint && size == i)
+      if (pointFirst.isNull())
+      {
+        pointFirst = point;
+      }
+      else if (pointPrev == point)
       {
 #ifdef DEBUG_WRITE_TO_OUTPUT
-        errorSl << "; Skipping last dupe point";
+        qDebug() << "; Skipping next dupe point";
+        errorSl << "; Skipping next dupe point";
 #endif
-        break;
+        continue;
       }
+      pointPrev = point;
 
       const QString output = convPtDegStr(point);
       if (output.startsWith(";"))
@@ -1678,6 +1630,38 @@ private:
         resultSl << output;
       }
     }
+
+    int size = resultSl.size();
+    if (size > 1 && resultSl.first() == resultSl.last())
+    {
+#ifdef DEBUG_WRITE_TO_OUTPUT
+      // maybe a bug or is by design
+      qDebug() << "; Skipping last dupe point";
+      errorSl << "; Skipping last dupe point";
+#endif
+      resultSl.removeLast();
+      --size;
+    }
+
+    // todo: da proverq za brojkite e tipa tuk!
+    if (isLine == true && size < 2)
+    {
+#ifdef DEBUG_WRITE_TO_OUTPUT
+      return "; Does not make much sense: polyline with less then minimum points";
+#else
+      return "";
+#endif
+    }
+    else if (isLine == false && size < 3) // maybe 4?
+    {
+      // a polygon with 3 points (with automatic closure) does not make much sense either
+#ifdef DEBUG_WRITE_TO_OUTPUT
+      return "; Does not make much sense: polygon with less then minimum points";
+#else
+      return "";
+#endif
+    }
+
     return QString("%1%2Data%3=%4").arg(errorSl.join('\n')).arg(errorSl.size() ? "\n" : "").arg(level).arg(resultSl.join(','));
   }
 
@@ -1725,7 +1709,7 @@ private:
   {
     for (const subfile_desc_t &subfile : std::as_const(subfiles))
     {
-      qDebug() << "------- loadData()" << subfile.name << "-------";
+      // qDebug() << "------- loadData()" << subfile.name << "-------";
 
       CFileExt file(inputFile);
       if (!file.open(QIODevice::ReadOnly))
@@ -1735,8 +1719,6 @@ private:
 
       QByteArray rgndata;
       readFile(file, subfile.parts["RGN"].offset, subfile.parts["RGN"].size, rgndata);
-
-      qDebug() << "rgn range" << Qt::hex << subfile.parts["RGN"].offset << (subfile.parts["RGN"].offset + subfile.parts["RGN"].size);
 
       const QVector<subdiv_desc_t> &subdivs = subfile.subdivs;
       for (const subdiv_desc_t &subdiv : subdivs)
@@ -1854,7 +1836,7 @@ private:
         // skip points outside our current viewport
         if (!subdiv.area.contains(p.pos))
         {
-          qDebug() << "skip points outside our current viewport:" << subdiv.area.topLeft() << subdiv.area.bottomRight() << p.pos;
+          // qDebug() << "skip points outside our current viewport:" << subdiv.area.topLeft() << subdiv.area.bottomRight() << p.pos;
           continue;
         }
 
@@ -2075,6 +2057,10 @@ private:
           qDebug() << QString("[W] %1").arg(output);
           tmpPoints << output;
         }
+        else if (output.length() == 0)
+        {
+          continue;
+        }
         else
         {
           tmpPoints << QString("Data%1=%2").arg(subdiv.level).arg(output);
@@ -2119,15 +2105,19 @@ private:
 
       if (!poi.pos.isNull())
       {
-        const QString str = convPtDegStr(poi.pos);
-        if (str.startsWith(";"))
+        const QString output = convPtDegStr(poi.pos);
+        if (output.startsWith(";"))
         {
-          qDebug() << QString("[W] %1").arg(str);
-          tmpPois << str;
+          qDebug() << QString("[W] %1").arg(output);
+          tmpPois << output;
+        }
+        else if (output.length() == 0)
+        {
+          continue;
         }
         else
         {
-          tmpPois << QString("Data%1=%2").arg(subdiv.level).arg(str);
+          tmpPois << QString("Data%1=%2").arg(subdiv.level).arg(output);
         }
       }
       tmpPois << "[END]\n";
@@ -2179,6 +2169,11 @@ private:
       }
 
       const QString output = convLnDegStr(ln.coords, subdiv.level, ln.len, true);
+      if (output.length() == 0)
+      {
+        continue;
+      }
+
 #ifdef DEBUG_WRITE_TO_OUTPUT
       if (output.contains("; Possibly bitstream error"))
       {
@@ -2201,10 +2196,8 @@ private:
         slPolylines2 << tmpPolylines.join("\n");
       }
     }
-    // slPolylines << "\n";
 
     count = 0;
-    // qDebug() << "total polygons:" << polygons.length();
     for (const CGarminPolygon &pg : polygons)
     {
       QStringList tmpPolygons;
@@ -2235,6 +2228,11 @@ private:
       }
 
       const QString output = convLnDegStr(pg.coords, subdiv.level, pg.len, false);
+      if (output.length() == 0)
+      {
+        continue;
+      }
+
 #ifdef DEBUG_WRITE_TO_OUTPUT
       if (output.contains("; Possibly bitstream error"))
       {
@@ -2257,7 +2255,6 @@ private:
         slPolygons2 << tmpPolygons.join("\n");
       }
     }
-    // slPolygons << "\n";
   }
 
   void readBasics()
@@ -2301,7 +2298,7 @@ private:
 
     mapdesc = QByteArray((const char *)pImgHdr->desc1, 20);
     mapdesc += pImgHdr->desc2;
-    qDebug() << "MAP Description:" << mapdesc;
+    // qDebug() << "MAP Description:" << mapdesc;
 
     size_t blocksize = pImgHdr->blocksize();
 
@@ -2425,7 +2422,7 @@ private:
     }
     // qDebug() << "copyright:" << copyright;
 
-    qDebug() << "dimensions:\t" << "N" << (qRadiansToDegrees(maparea.bottom())) << "E" << (qRadiansToDegrees(maparea.right())) << "S" << (qRadiansToDegrees(maparea.top())) << "W" << (qRadiansToDegrees(maparea.left()));
+    // qDebug() << "dimensions:\t" << "N" << (qRadiansToDegrees(maparea.bottom())) << "E" << (qRadiansToDegrees(maparea.right())) << "S" << (qRadiansToDegrees(maparea.top())) << "W" << (qRadiansToDegrees(maparea.left()));
   }
 
   void readSubfileBasics(subfile_desc_t &subfile, CFileExt &file)
@@ -2543,12 +2540,10 @@ private:
     quint32 rgnLenPolyl2 = gar_load(quint32, pRgnHdr->length_polyl2);
     quint32 rgnLenPoint2 = gar_load(quint32, pRgnHdr->length_point2);
 
-    qDebug() << "***" << Qt::hex << subfile.parts["RGN"].offset << (subfile.parts["RGN"].offset + subfile.parts["RGN"].size);
-    qDebug() << "+++" << Qt::hex << rgnOffPolyg2 << (rgnOffPolyg2 + rgnLenPolyg2);
-    qDebug() << "+++" << Qt::hex << rgnOffPolyl2 << (rgnOffPolyl2 + rgnLenPolyl2);
-    // printHex(rgnOffPolyl2, 2);
-    qDebug() << "+++" << Qt::hex << rgnOffPoint2 << (rgnOffPoint2 + rgnLenPoint2);
-    qDebug() << "REGION LEN:" << pRgnHdr->length;
+    // qDebug() << "***" << Qt::hex << subfile.parts["RGN"].offset << (subfile.parts["RGN"].offset + subfile.parts["RGN"].size);
+    // qDebug() << "+++" << Qt::hex << rgnOffPolyg2 << (rgnOffPolyg2 + rgnLenPolyg2);
+    // qDebug() << "+++" << Qt::hex << rgnOffPolyl2 << (rgnOffPolyl2 + rgnLenPolyl2);
+    // qDebug() << "+++" << Qt::hex << rgnOffPoint2 << (rgnOffPoint2 + rgnLenPoint2);
 
     // parse all 16 byte subdivision entries
     quint32 i;
@@ -2584,8 +2579,8 @@ private:
       subdiv->iCenterLng = cx;
       qint32 cy = gar_ptr_load(uint24_t, &pSubDivN->center_lat);
       subdiv->iCenterLat = cy;
-      qDebug() << "cx:" << &pSubDivN->center_lng << subdiv->level << subdiv->shift;
-      qDebug() << "cy:" << &pSubDivN->center_lat << subdiv->level << subdiv->shift;
+      // qDebug() << "cx:" << &pSubDivN->center_lng << subdiv->level << subdiv->shift;
+      // qDebug() << "cy:" << &pSubDivN->center_lat << subdiv->level << subdiv->shift;
       qint32 width = TRE_SUBDIV_WIDTH(pSubDivN) << subdiv->shift;
       qint32 height = gar_load(uint16_t, pSubDivN->height) << subdiv->shift;
 
@@ -2660,7 +2655,7 @@ private:
     if ((gar_load(uint16_t, pTreHdr->hdr_subfile_part_t::length) >= 0x9A) && pTreHdr->tre7_size && (gar_load(uint16_t, pTreHdr->tre7_rec_size) >= sizeof(tre_subdiv2_t)))
     {
       rgnoff = subfile.parts["RGN"].offset;
-      qDebug() << subdivs.count() << (pTreHdr->tre7_size / pTreHdr->tre7_rec_size) << pTreHdr->tre7_rec_size;
+      // qDebug() << subdivs.count() << (pTreHdr->tre7_size / pTreHdr->tre7_rec_size) << pTreHdr->tre7_rec_size;
       QByteArray subdiv2;
       readFile(file, subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre7_offset), gar_load(quint32, pTreHdr->tre7_size), subdiv2);
       tre_subdiv2_t *pSubDiv2 = (tre_subdiv2_t *)subdiv2.data();
@@ -2669,14 +2664,6 @@ private:
       const quint32 entries2 = subdivs.size();
 
       bool skipPois = (gar_load(uint16_t, pTreHdr->tre7_rec_size) != sizeof(tre_subdiv2_t));
-
-      for (int i = 0; i < pTreHdr->tre7_rec_size; ++i)
-      {
-        if (i % 4 == 0)
-          fprintf(stderr, "\n");
-        fprintf(stderr, "%02X ", ((quint8 *)pSubDiv2)[i]);
-      }
-      fprintf(stderr, "\n");
 
       subdiv = subdivs.begin();
       subdiv_prev = subdivs.begin();
@@ -2689,14 +2676,6 @@ private:
 
       while (subdiv != subdivs.end())
       {
-        for (int i = 0; i < pTreHdr->tre7_rec_size; ++i)
-        {
-          if (i % 4 == 0)
-            fprintf(stderr, "\n");
-          fprintf(stderr, "%02X ", ((quint8 *)pSubDiv2)[i]);
-        }
-        fprintf(stderr, "\n");
-
         subdiv->offsetPolygons2 = gar_load(quint32, pSubDiv2->offsetPolygons) + rgnOffPolyg2;
         subdiv->offsetPolylines2 = gar_load(quint32, pSubDiv2->offsetPolyline) + rgnOffPolyl2;
         subdiv->offsetPoints2 = skipPois ? 0 : gar_load(quint32, pSubDiv2->offsetPoints) + rgnOffPoint2;
@@ -2746,10 +2725,10 @@ private:
     }
 #endif
 
-    qDebug() << "***" << Qt::hex << subfile.parts["RGN"].offset << (subfile.parts["RGN"].offset + subfile.parts["RGN"].size);
-    qDebug() << "+++" << Qt::hex << rgnOffPolyg2 << (rgnOffPolyg2 + pRgnHdr->length_polyg2);
-    qDebug() << "+++" << Qt::hex << rgnOffPolyl2 << (rgnOffPolyl2 + pRgnHdr->length_polyl2);
-    qDebug() << "+++" << Qt::hex << rgnOffPoint2 << (rgnOffPoint2 + pRgnHdr->length_point2);
+    // qDebug() << "***" << Qt::hex << subfile.parts["RGN"].offset << (subfile.parts["RGN"].offset + subfile.parts["RGN"].size);
+    // qDebug() << "+++" << Qt::hex << rgnOffPolyg2 << (rgnOffPolyg2 + pRgnHdr->length_polyg2);
+    // qDebug() << "+++" << Qt::hex << rgnOffPolyl2 << (rgnOffPolyl2 + pRgnHdr->length_polyl2);
+    // qDebug() << "+++" << Qt::hex << rgnOffPoint2 << (rgnOffPoint2 + pRgnHdr->length_point2);
 
     if (subfile.parts.contains("LBL"))
     {
@@ -2759,13 +2738,6 @@ private:
 
       quint32 offsetLbl1 = subfile.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl1_offset);
       quint32 offsetLbl6 = subfile.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl6_offset);
-
-      // debug label...
-      // qDebug() << "LABEL1:" << Qt::hex << pLblHdr->lbl1_offset << pLblHdr->lbl1_length << offsetLbl1;
-      // qDebug() << "LABEL2:" << Qt::hex << pLblHdr->lbl2_offset << pLblHdr->lbl2_length;
-      // qDebug() << "LABEL3:" << Qt::hex << pLblHdr->lbl3_offset << pLblHdr->lbl3_length;
-      // qDebug() << "LABEL4:" << Qt::hex << pLblHdr->lbl4_offset << pLblHdr->lbl4_length;
-      // qDebug() << "LABEL5:" << Qt::hex << pLblHdr->lbl5_offset << pLblHdr->lbl5_length;
 
       QByteArray nethdr;
       quint32 offsetNet1 = 0;
@@ -2857,7 +2829,6 @@ private:
 
   void printHeader()
   {
-    qDebug() << "ALL MAP LEVEL:" << subfiles.size() << subfiles.count();
     bool isFirst = true;
 
     QStringList sl;
