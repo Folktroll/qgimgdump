@@ -31,7 +31,7 @@
 // #define DEBUG_SHOW_MAPLEVEL_DATA
 // #define DEBUG_SHOW_SUBDIV_DATA
 // #define DEBUG_SHOW_MAPLEVELS
-// #define DEBUG_SHOW_POLY_DATA_SUBDIV
+#define DEBUG_SHOW_POLY_DATA_SUBDIV
 // #define DEBUG_SHOW_POLY_DATA_DECODE
 // #define DEBUG_SHOW_POLY_DATA_DECODE_EX
 // #define DEBUG_SHOW_POLY_PTS
@@ -1186,17 +1186,59 @@ public:
     }
     // of.setBufferSize(16 * 1024);
 
+    CFileExt file(inputFile);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+      return;
+    }
+
     try
     {
       readBasics();
       processPrimaryMapData();
       printHeader();
 
+      int times = 0;
       QVector<map_level_t>::const_iterator maplevel = maplevels.constBegin();
       while (maplevel)
       {
         ++maplevel;
-        loadData(polygons, polylines, points, pois, maplevel->level);
+        unsigned level = maplevel->level;
+
+        for (const subfile_desc_t &subfile : std::as_const(subfiles))
+        {
+          QByteArray rgndata;
+          readFile(file, subfile.parts["RGN"].offset, subfile.parts["RGN"].size, rgndata);
+          if (rgndata.length() == 0)
+          {
+            continue;
+          }
+
+          const QVector<subdiv_desc_t> &subdivs = subfile.subdivs;
+          for (const subdiv_desc_t &subdiv : subdivs)
+          {
+
+            if (subdiv.level != level)
+            {
+              // qDebug() << "Level does not exists (skip):" << level << subdiv.level;
+              continue;
+            }
+            ++times;
+
+            // if (times > 3)
+            // {
+            //   break;
+            // }
+
+            // qDebug() << "decodeRgn() times:" << times;
+            decodeRgn(file, subdiv, subfile.strtbl, rgndata, polylines, polygons, points, pois);
+          }
+        }
+
+        // if (times > 3)
+        // {
+        //   break;
+        // }
 
         if (maplevels.constEnd() == maplevel)
         {
@@ -1218,6 +1260,8 @@ public:
     {
       qDebug() << "Fatal error:" << e.msg;
     }
+
+    file.close();
   }
 
   virtual ~CMap()
@@ -1296,155 +1340,155 @@ private:
   // Garmin IMG file header structure, to the start of the FAT blocks
   struct hdr_img_t
   {
-    quint8 xorByte;                // 0x0000
-    quint8 byte0x0001_0x000F[15];  //
-    char signature[7];             // 0x0010..0x0016
-    quint8 byte0x0017_0x0040[42];  //
-    char identifier[7];            // 0x0041..0x0047
-    quint8 byte0x0048;             //
-    char desc1[20];                // 0x0049..0x005C
-    quint8 byte0x005D_0x0060[4];   //
-    quint8 e1;                     // 0x0061
-    quint8 e2;                     // 0x0062
-    quint8 byte0x0063_0x0064[2];   //
-    char desc2[31];                // 0x0065..0x0083
-    quint8 byte0x0084_0x040B[904]; //
-    quint32 dataoffset;            // 0x040C..0x040F
-    quint8 byte0x0410_0x041F[16];  //
-    quint16 blocks[240];           // 0x0420..0x05FF
+    quint8 xorByte;             // 0x0000
+    quint8 b0x0001_0x000F[15];  //
+    char signature[7];          // 0x0010..0x0016
+    quint8 b0x0017_0x0040[42];  //
+    char identifier[7];         // 0x0041..0x0047
+    quint8 b0x0048;             //
+    char desc1[20];             // 0x0049..0x005C
+    quint8 b0x005D_0x0060[4];   //
+    quint8 e1;                  // 0x0061
+    quint8 e2;                  // 0x0062
+    quint8 b0x0063_0x0064[2];   //
+    char desc2[31];             // 0x0065..0x0083
+    quint8 b0x0084_0x040B[904]; //
+    quint32 dataoffset;         // 0x040C..0x040F
+    quint8 b0x0410_0x041F[16];  //
+    quint16 blocks[240];        // 0x0420..0x05FF
     quint32 blocksize() { return 1 << (e1 + e2); }
   };
   struct FATblock_t
   {
-    quint8 flag;                  // 0x0000
-    char name[8];                 // 0x0001..0x0008
-    char type[3];                 // 0x0009..0x000B
-    quint32 size;                 // 0x000C..0x000F
-    quint16 part;                 // 0x0010..0x0011
-    quint8 byte0x0012_0x001F[14]; //
-    quint16 blocks[240];          // 0x0020..0x01FF
+    quint8 flag;               // 0x0000
+    char name[8];              // 0x0001..0x0008
+    char type[3];              // 0x0009..0x000B
+    quint32 size;              // 0x000C..0x000F
+    quint16 part;              // 0x0010..0x0011
+    quint8 b0x0012_0x001F[14]; //
+    quint16 blocks[240];       // 0x0020..0x01FF
   };
 
   // common header of the RGN, TRE, LBL, NET, ... parts of the IMG file
   struct hdr_subfile_part_t
   {
-    quint16 length;              // 0x0000..0x0001
-    char type[10];               // 0x0002..0x000B
-    quint8 byte0x000C;           //
-    quint8 flag;                 // 0x000D
-    quint8 byte0x000E_0x0014[7]; //
+    quint16 length;           // 0x0000..0x0001
+    char type[10];            // 0x0002..0x000B
+    quint8 b0x000C;           //
+    quint8 flag;              // 0x000D
+    quint8 b0x000E_0x0014[7]; //
   };
 
   // TRE part header
   struct hdr_tre_t : public hdr_subfile_part_t
   {
-    quint24 northbound;           // 0x0015..0x0017
-    quint24 eastbound;            // 0x0018..0x001A
-    quint24 southbound;           // 0x001B..0x001D
-    quint24 westbound;            // 0x001E..0x0020
-    quint32 tre1_offset;          // 0x0021..0x0024
-    quint32 tre1_size;            // 0x0025..0x0028
-    quint32 tre2_offset;          // 0x0029..0x002C
-    quint32 tre2_size;            // 0x002D..0x0030
-    quint32 tre3_offset;          // 0x0031..0x0034
-    quint32 tre3_size;            // 0x0035..0x0038
-    quint16 tre3_rec_size;        // 0x0039..0x003A
-    quint8 byte0x003B_0x003E[4];  //
-    quint8 POI_flags;             // 0x003F
-    quint8 byte0x0040_0x0049[10]; //
-    quint32 tre4_offset;          // 0x004A..0x004D
-    quint32 tre4_size;            // 0x004E..0x0051
-    quint16 tre4_rec_size;        // 0x0052..0x0053
-    quint8 byte0x0054_0x0057[4];  //
-    quint32 tre5_offset;          // 0x0058..0x005B
-    quint32 tre5_size;            // 0x005C..0x005F
-    quint16 tre5_rec_size;        // 0x0060..0x0061
-    quint8 byte0x0062_0x0065[4];  //
-    quint32 tre6_offset;          // 0x0066..0x0069
-    quint32 tre6_size;            // 0x006A..0x006D
-    quint16 tre6_rec_size;        // 0x006E..0x006F
-    quint8 byte0x0070_0x0073[4];  //
-    quint8 byte0x0074_0x007B[8];  //
-    quint32 tre7_offset;          // 0x007C..0x007F
-    quint32 tre7_size;            // 0x0080..0x0083
-    quint16 tre7_rec_size;        // 0x0084..0x0085
-    quint8 byte0x0086_0x0089[4];  //
-    quint32 tre8_offset;          // 0x008A..0x008D
-    quint32 tre8_size;            // 0x008E..0x0091
-    quint16 tre8_rec_size;        // 0x0092..0x0093
-    quint16 polyl2_types_num;     // 0x0094..0x0095
-    quint16 polyg2_types_num;     // 0x0096..0x0097
-    quint16 poi2_types_num;       // 0x0098..0x0099
-    quint8 key[20];               // 0x009A..0x00AD
-    quint32 tre9_offset;          // 0x00AE..0x00B1
-    quint32 tre9_size;            // 0x00B2..0x00B5
-    quint16 tre9_rec_size;        // 0x00B6..0x00B7
+    quint24 northbound;        // 0x0015..0x0017
+    quint24 eastbound;         // 0x0018..0x001A
+    quint24 southbound;        // 0x001B..0x001D
+    quint24 westbound;         // 0x001E..0x0020
+    quint32 tre1_offset;       // 0x0021..0x0024
+    quint32 tre1_size;         // 0x0025..0x0028
+    quint32 tre2_offset;       // 0x0029..0x002C
+    quint32 tre2_size;         // 0x002D..0x0030
+    quint32 tre3_offset;       // 0x0031..0x0034
+    quint32 tre3_size;         // 0x0035..0x0038
+    quint16 tre3_rec_size;     // 0x0039..0x003A
+    quint8 b0x003B_0x003E[4];  //
+    quint8 POI_flags;          // 0x003F
+    quint8 b0x0040_0x0049[10]; //
+    quint32 tre4_offset;       // 0x004A..0x004D
+    quint32 tre4_size;         // 0x004E..0x0051
+    quint16 tre4_rec_size;     // 0x0052..0x0053
+    quint8 b0x0054_0x0057[4];  //
+    quint32 tre5_offset;       // 0x0058..0x005B
+    quint32 tre5_size;         // 0x005C..0x005F
+    quint16 tre5_rec_size;     // 0x0060..0x0061
+    quint8 b0x0062_0x0065[4];  //
+    quint32 tre6_offset;       // 0x0066..0x0069
+    quint32 tre6_size;         // 0x006A..0x006D
+    quint16 tre6_rec_size;     // 0x006E..0x006F
+    quint8 b0x0070_0x0073[4];  //
+    quint8 b0x0074_0x007B[8];  //
+    quint32 tre7_offset;       // 0x007C..0x007F
+    quint32 tre7_size;         // 0x0080..0x0083
+    quint16 tre7_rec_size;     // 0x0084..0x0085
+    quint8 b0x0086_0x0089[4];  //
+    quint32 tre8_offset;       // 0x008A..0x008D
+    quint32 tre8_size;         // 0x008E..0x0091
+    quint16 tre8_rec_size;     // 0x0092..0x0093
+    quint16 polyl2_types_num;  // 0x0094..0x0095
+    quint16 polyg2_types_num;  // 0x0096..0x0097
+    quint16 poi2_types_num;    // 0x0098..0x0099
+    quint8 key[20];            // 0x009A..0x00AD
+    quint32 tre9_offset;       // 0x00AE..0x00B1
+    quint32 tre9_size;         // 0x00B2..0x00B5
+    quint16 tre9_rec_size;     // 0x00B6..0x00B7
   };
 
   // RGN part header
   struct hdr_rgn_t : public hdr_subfile_part_t
   {
-    quint32 offset;               // 0x0015..0x0018
-    quint32 length;               // 0x0019..0x001C
-    quint32 offset_polyg2;        // 0x001D..0x0020
-    quint32 length_polyg2;        // 0x0021..0x0024
-    quint8 byte0x0025_0x0038[20]; //
-    quint32 offset_polyl2;        // 0x0039..0x003C
-    quint32 length_polyl2;        // 0x003D..0x0040
-    quint8 byte0x0041_0x0054[20]; //
-    quint32 offset_point2;        // 0x0055..0x0058
-    quint32 length_point2;        // 0x0059..0x005C
+    quint32 offset;            // 0x0015..0x0018
+    quint32 length;            // 0x0019..0x001C
+    quint32 offset_polyg2;     // 0x001D..0x0020
+    quint32 length_polyg2;     // 0x0021..0x0024
+    quint8 b0x0025_0x0038[20]; //
+    quint32 offset_polyl2;     // 0x0039..0x003C
+    quint32 length_polyl2;     // 0x003D..0x0040
+    quint8 b0x0041_0x0054[20]; //
+    quint32 offset_point2;     // 0x0055..0x0058
+    quint32 length_point2;     // 0x0059..0x005C
   };
 
   // LBL part header
   struct hdr_lbl_t : public hdr_subfile_part_t
   {
-    quint32 lbl1_offset;         // 0x0015..0x0018
-    quint32 lbl1_length;         // 0x0019..0x001C
-    quint8 addr_shift;           // 0x001D
-    quint8 coding;               // 0x001E
-    quint32 lbl2_offset;         // 0x001F..0x0022
-    quint32 lbl2_length;         // 0x0023..0x0026
-    quint16 lbl2_rec_size;       // 0x0027..0x0028
-    quint8 byte0x0029_0x002C[4]; //
-    quint32 lbl3_offset;         // 0x002D..0x0030
-    quint32 lbl3_length;         // 0x0031..0x0034
-    quint16 lbl3_rec_size;       // 0x0035..0x0036
-    quint8 byte0x0037_0x003A[4]; //
-    quint32 lbl4_offset;         // 0x003B..0x003E
-    quint32 lbl4_length;         // 0x003F..0x0042
-    quint16 lbl4_rec_size;       // 0x0043..0x0044
-    quint8 byte0x0045_0x0048[4]; //
-    quint32 lbl5_offset;         // 0x0049..0x004C
-    quint32 lbl5_length;         // 0x004D..0x0050
-    quint16 lbl5_rec_size;       // 0x0051..0x0052
-    quint8 byte0x0053_0x0056[4]; //
-    quint32 lbl6_offset;         // 0x0057..0x005A
-    quint32 lbl6_length;         // 0x005B..0x005E
-    quint8 lbl6_addr_shift;      // 0x005F
-    quint8 lbl6_glob_mask;       // 0x0060
-    quint8 byte0x0061_0x0063[3]; //
-    quint32 lbl7_offset;         // 0x0064..0x0067
-    quint32 lbl7_length;         // 0x0068..0x006B
-    quint16 lbl7_rec_size;       // 0x006C..0x006D
-    quint8 byte0x006E_0x0071[4]; //
-    quint32 lbl8_offset;         // 0x0072..0x0075
-    quint32 lbl8_length;         // 0x0076..0x0079
-    quint16 lbl8_rec_size;       // 0x007A..0x007B
-    quint8 byte0x007C_0x007F[4]; //
-    quint32 lbl9_offset;         // 0x0080..0x0083
-    quint32 lbl9_length;         // 0x0084..0x0087
-    quint16 lbl9_rec_size;       // 0x0088..0x0089
-    quint8 byte0x008A_0x008D[4]; //
-    quint32 lbl10_offset;        // 0x008E..0x0091
-    quint32 lbl10_length;        // 0x0092..0x0095
-    quint16 lbl10_rec_size;      // 0x0096..0x0097
-    quint8 byte0x0098_0x009B[4]; //
-    quint32 lbl11_offset;        // 0x009C..0x009F
-    quint32 lbl11_length;        // 0x00A0..0x00A3
-    quint16 lbl11_rec_size;      // 0x00A4..0x00A5
-    quint8 byte0x00A6_0x00A9[4]; //
-    quint16 codepage;            // 0x00AA..0x00AB
+    quint32 lbl1_offset;      // 0x0015..0x0018
+    quint32 lbl1_length;      // 0x0019..0x001C
+    quint8 addr_shift;        // 0x001D
+    quint8 coding;            // 0x001E
+    quint32 lbl2_offset;      // 0x001F..0x0022
+    quint32 lbl2_length;      // 0x0023..0x0026
+    quint16 lbl2_rec_size;    // 0x0027..0x0028
+    quint8 b0x0029_0x002C[4]; //
+    quint32 lbl3_offset;      // 0x002D..0x0030
+    quint32 lbl3_length;      // 0x0031..0x0034
+    quint16 lbl3_rec_size;    // 0x0035..0x0036
+    quint8 b0x0037_0x003A[4]; //
+    quint32 lbl4_offset;      // 0x003B..0x003E
+    quint32 lbl4_length;      // 0x003F..0x0042
+    quint16 lbl4_rec_size;    // 0x0043..0x0044
+    quint8 b0x0045_0x0048[4]; //
+    quint32 lbl5_offset;      // 0x0049..0x004C
+    quint32 lbl5_length;      // 0x004D..0x0050
+    quint16 lbl5_rec_size;    // 0x0051..0x0052
+    quint8 b0x0053_0x0056[4]; //
+    quint32 lbl6_offset;      // 0x0057..0x005A
+    quint32 lbl6_length;      // 0x005B..0x005E
+    quint8 lbl6_addr_shift;   // 0x005F
+    quint8 lbl6_glob_mask;    // 0x0060
+    quint8 b0x0061_0x0063[3]; //
+    quint32 lbl7_offset;      // 0x0064..0x0067
+    quint32 lbl7_length;      // 0x0068..0x006B
+    quint16 lbl7_rec_size;    // 0x006C..0x006D
+    quint8 b0x006E_0x0071[4]; //
+    quint32 lbl8_offset;      // 0x0072..0x0075
+    quint32 lbl8_length;      // 0x0076..0x0079
+    quint16 lbl8_rec_size;    // 0x007A..0x007B
+    quint8 b0x007C_0x007F[4]; //
+    quint32 lbl9_offset;      // 0x0080..0x0083
+    quint32 lbl9_length;      // 0x0084..0x0087
+    quint16 lbl9_rec_size;    // 0x0088..0x0089
+    quint8 b0x008A_0x008D[4]; //
+    quint32 lbl10_offset;     // 0x008E..0x0091
+    quint32 lbl10_length;     // 0x0092..0x0095
+    quint16 lbl10_rec_size;   // 0x0096..0x0097
+    quint8 b0x0098_0x009B[4]; //
+    quint32 lbl11_offset;     // 0x009C..0x009F
+    quint32 lbl11_length;     // 0x00A0..0x00A3
+    quint16 lbl11_rec_size;   // 0x00A4..0x00A5
+    quint8 b0x00A6_0x00A9[4]; //
+    quint16 codepage;         // 0x00AA..0x00AB
     // 0x00EC: map created with cgpsmapper
     // 0x0108: not for sale
     // 0x0429: copyright ....
@@ -1724,39 +1768,9 @@ private:
     return !viewport.intersects(ref);
   }
 
-  void loadData(polytype_t &polygons, polytype_t &polylines, pointtype_t &points, pointtype_t &pois, unsigned level)
+  void decodeRgn(CFileExt &file, const subdiv_desc_t &subdiv, IGarminStrTbl *strtbl, const QByteArray &rgndata, polytype_t &polylines, polytype_t &polygons, pointtype_t &points, pointtype_t &pois)
   {
-    for (const subfile_desc_t &subfile : std::as_const(subfiles))
-    {
-      // qDebug() << "------- loadData()" << subfile.name << "-------";
-
-      CFileExt file(inputFile);
-      if (!file.open(QIODevice::ReadOnly))
-      {
-        return;
-      }
-
-      QByteArray rgndata;
-      readFile(file, subfile.parts["RGN"].offset, subfile.parts["RGN"].size, rgndata);
-
-      const QVector<subdiv_desc_t> &subdivs = subfile.subdivs;
-      for (const subdiv_desc_t &subdiv : subdivs)
-      {
-        if (subdiv.level != level)
-        {
-          // qDebug() << "Level does not exists (skip):" << level << subdiv.level;
-          continue;
-        }
-        loadSubDiv(file, subdiv, subfile.strtbl, rgndata, polylines, polygons, points, pois);
-      }
-
-      file.close();
-    }
-  }
-
-  void loadSubDiv(CFileExt &file, const subdiv_desc_t &subdiv, IGarminStrTbl *strtbl, const QByteArray &rgndata, polytype_t &polylines, polytype_t &polygons, pointtype_t &points, pointtype_t &pois)
-  {
-    if (subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 && !subdiv.lengthPoints2)
+    if ((subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 && !subdiv.lengthPoints2))
     {
       return;
     }
@@ -1765,11 +1779,6 @@ private:
     pois.clear();
     polylines.clear();
     polygons.clear();
-
-#ifdef DEBUG_SHOW_POLY_DATA_SUBDIV
-    qDebug() << "\n--------- loadSubDiv()" << file.fileName() << "---------";
-    qDebug() << " Level:" << subdiv.level << " Area:" << subdiv.area << subdiv.iCenterLat << subdiv.iCenterLng << subdiv.east << subdiv.west << subdiv.north << subdiv.south;
-#endif
 
     const quint8 *pRawData = (quint8 *)rgndata.data();
 
@@ -1830,12 +1839,8 @@ private:
     }
 
 #ifdef DEBUG_SHOW_POLY_DATA_SUBDIV
-    qDebug() << "--- Subdivision" << subdiv.n << subdiv.area.topLeft() << subdiv.area.bottomRight() << "---";
-    qDebug() << "addr:" << Qt::hex << subdiv.rgn_start << "- " << subdiv.rgn_end;
-    qDebug() << "addr points:            " << Qt::hex << opnt;
-    qDebug() << "addr pois:    " << Qt::hex << opoi;
-    qDebug() << "addr polylines:         " << Qt::hex << opline;
-    qDebug() << "addr polygons:          " << Qt::hex << opgon;
+    qDebug() << "--- Subdivision" << subdiv.level << subdiv.n << file.fileName() << "---";
+    qDebug() << "addr:   " << Qt::hex << subdiv.rgn_start << "-" << subdiv.rgn_end << "|" << opnt << opoi << opline << opgon;
 #endif
 
     CGarminPolygon p;
@@ -2012,10 +2017,10 @@ private:
 
     if (subdiv.lengthPoints2)
     {
-      // qDebug() << "Exteneded type: point";
-      // qDebug() << "point off: " << Qt::hex << subdiv.offsetPoints2;
-      // qDebug() << "point len: " << Qt::hex << subdiv.lengthPoints2;
-      // qDebug() << "point end: " << Qt::hex << subdiv.lengthPoints2 + subdiv.offsetPoints2;
+      qDebug() << "Exteneded type: point";
+      qDebug() << "point off: " << Qt::hex << subdiv.offsetPoints2;
+      qDebug() << "point len: " << Qt::hex << subdiv.lengthPoints2;
+      qDebug() << "point end: " << Qt::hex << subdiv.lengthPoints2 + subdiv.offsetPoints2;
 
       const quint8 *pData = pRawData + subdiv.offsetPoints2;
       const quint8 *pEnd = pData + subdiv.lengthPoints2;
@@ -2539,7 +2544,7 @@ private:
     // point to first 16 byte subdivision definition entry
     QByteArray subdiv_n;
     readFile(file, subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre2_offset), gar_load(quint32, pTreHdr->tre2_size), subdiv_n);
-    tre_subdiv_next_t *pSubDivN = (tre_subdiv_next_t *)subdiv_n.data();
+    tre_subdiv_next_t *pTre2N = (tre_subdiv_next_t *)subdiv_n.data();
 
     QVector<subdiv_desc_t> subdivs;
     subdivs.resize(nsubdivs);
@@ -2559,30 +2564,26 @@ private:
     quint32 rgnLenPolyl2 = gar_load(quint32, pRgnHdr->length_polyl2);
     quint32 rgnLenPoint2 = gar_load(quint32, pRgnHdr->length_point2);
 
-    // qDebug() << "***" << Qt::hex << subfile.parts["RGN"].offset << (subfile.parts["RGN"].offset + subfile.parts["RGN"].size);
-    // qDebug() << "+++" << Qt::hex << rgnOffPolyg2 << (rgnOffPolyg2 + rgnLenPolyg2);
-    // qDebug() << "+++" << Qt::hex << rgnOffPolyl2 << (rgnOffPolyl2 + rgnLenPolyl2);
-    // qDebug() << "+++" << Qt::hex << rgnOffPoint2 << (rgnOffPoint2 + rgnLenPoint2);
-
     // parse all 16 byte subdivision entries
     quint32 i;
     for (i = 0; i < nsubdivs_next; ++i, --nsubdiv)
     {
       subdiv->n = i;
-      subdiv->next = gar_load(uint16_t, pSubDivN->next);
-      subdiv->terminate = TRE_SUBDIV_TERM(pSubDivN);
-      subdiv->rgn_start = gar_ptr_load(uint24_t, &pSubDivN->rgn_offset);
+      subdiv->next = gar_load(uint16_t, pTre2N->next);
+      subdiv->terminate = TRE_SUBDIV_TERM(pTre2N);
+      subdiv->rgn_start = gar_ptr_load(uint24_t, &pTre2N->rgn_offset);
       subdiv->rgn_start += rgnoff;
       // skip if this is the first entry
       if (subdiv_prev != subdivs.end())
       {
         subdiv_prev->rgn_end = subdiv->rgn_start;
       }
+      // qDebug() << "DEBUG SUBDIV OFFSETS1:" << subdiv->n << Qt::hex << subdiv->rgn_start << subdiv_prev->rgn_end << rgnoff;
 
-      subdiv->hasPoints = pSubDivN->elements & 0x10;
-      subdiv->hasPois = pSubDivN->elements & 0x20;
-      subdiv->hasPolylines = pSubDivN->elements & 0x40;
-      subdiv->hasPolygons = pSubDivN->elements & 0x80;
+      subdiv->hasPoints = pTre2N->elements & 0x10;
+      subdiv->hasPois = pTre2N->elements & 0x20;
+      subdiv->hasPolylines = pTre2N->elements & 0x40;
+      subdiv->hasPolygons = pTre2N->elements & 0x80;
 
       // if all subdivisions of this level have been parsed, switch to the next one
       if (nsubdiv == 0)
@@ -2594,14 +2595,14 @@ private:
       subdiv->level = TRE_MAP_LEVEL(pMapLevel);
       subdiv->shift = 24 - pMapLevel->bits;
 
-      qint32 cx = gar_ptr_load(uint24_t, &pSubDivN->center_lng);
+      qint32 cx = gar_ptr_load(uint24_t, &pTre2N->center_lng);
       subdiv->iCenterLng = cx;
-      qint32 cy = gar_ptr_load(uint24_t, &pSubDivN->center_lat);
+      qint32 cy = gar_ptr_load(uint24_t, &pTre2N->center_lat);
       subdiv->iCenterLat = cy;
       // qDebug() << "cx:" << &pSubDivN->center_lng << subdiv->level << subdiv->shift;
       // qDebug() << "cy:" << &pSubDivN->center_lat << subdiv->level << subdiv->shift;
-      qint32 width = TRE_SUBDIV_WIDTH(pSubDivN) << subdiv->shift;
-      qint32 height = gar_load(uint16_t, pSubDivN->height) << subdiv->shift;
+      qint32 width = TRE_SUBDIV_WIDTH(pTre2N) << subdiv->shift;
+      qint32 height = gar_load(uint16_t, pTre2N->height) << subdiv->shift;
 
       subdiv->north = GARMIN_RAD(cy + height + 1);
       subdiv->south = GARMIN_RAD(cy - height);
@@ -2618,14 +2619,14 @@ private:
       subdiv->lengthPolygons2 = 0;
 
       subdiv_prev = subdiv;
-      ++pSubDivN;
+      ++pTre2N;
       ++subdiv;
     }
 
     // switch to last map level
     ++pMapLevel;
     // witch pointer to 14 byte subdivision sections
-    tre_subdiv_t *pSubDivL = pSubDivN;
+    tre_subdiv_t *pSubDivL = pTre2N;
     // parse all 14 byte subdivision entries of last map level
     for (; i < nsubdivs; ++i)
     {
@@ -2635,6 +2636,7 @@ private:
       subdiv->rgn_start = gar_ptr_load(uint24_t, &pSubDivL->rgn_offset);
       subdiv->rgn_start += rgnoff;
       subdiv_prev->rgn_end = subdiv->rgn_start;
+      // qDebug() << "DEBUG SUBDIV OFFSETS2:" << subdiv->n << Qt::hex << subdiv->rgn_start << subdiv_prev->rgn_end << rgnoff;
       subdiv->hasPoints = pSubDivL->elements & 0x10;
       subdiv->hasPois = pSubDivL->elements & 0x20;
       subdiv->hasPolylines = pSubDivL->elements & 0x40;
@@ -2689,6 +2691,8 @@ private:
       subdiv->offsetPolygons2 = gar_load(quint32, pSubDiv2->offsetPolygons) + rgnOffPolyg2;
       subdiv->offsetPolylines2 = gar_load(quint32, pSubDiv2->offsetPolyline) + rgnOffPolyl2;
       subdiv->offsetPoints2 = skipPois ? 0 : gar_load(quint32, pSubDiv2->offsetPoints) + rgnOffPoint2;
+
+      // qDebug() << "readSubdivInfoExt()" << Qt::hex << last.lengthPolylines2 << last.lengthPoints2 << last.lengthPolygons2;
 
       ++subdiv;
       pSubDiv2 = reinterpret_cast<tre_subdiv2_t *>((quint8 *)pSubDiv2 + gar_endian(uint16_t, pTreHdr->tre7_rec_size));
