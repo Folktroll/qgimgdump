@@ -17,49 +17,60 @@
 
 **********************************************************************************************/
 
-#include <QStack>
-#include <QRegularExpression>
-#include <QPen>
-#include <QtCore5Compat/QTextCodec>
-#include <QFileInfo>
-#include <QDebug>
-#include <QCoreApplication>
-#include <QCommandLineParser>
 #include <QCommandLineOption>
+#include <QCommandLineParser>
+#include <QCoreApplication>
+#include <QDebug>
+#include <QException>
+#include <QFileInfo>
+#include <QMutexLocker>
+#include <QPen>
+#include <QRegularExpression>
+#include <QStack>
+#include <QtCore5Compat/QTextCodec>
+#include <iostream>
 
-// #define DEBUG_SHOW_SECT_DESC
+#define DEBUG_SHOW_SECT_DESC
+#define DEBUG_SHOW_MAPLEVELS
+// #define DEBUG_SHOW_POLY_DATA_SUBDIV
 // #define DEBUG_SHOW_MAPLEVEL_DATA
 // #define DEBUG_SHOW_SUBDIV_DATA
-// #define DEBUG_SHOW_MAPLEVELS
-#define DEBUG_SHOW_POLY_DATA_SUBDIV
 // #define DEBUG_SHOW_POLY_DATA_DECODE
-// #define DEBUG_SHOW_POLY_DATA_DECODE_EX
+// #define DEBUG_SHOW_POLY_DATA_DECODE_EXT
 // #define DEBUG_SHOW_POLY_PTS
 // #define DEBUG_WRITE_TO_OUTPUT
 
 // 1 garmin unit = 360 / MAX_FLOAT_PREC
 
+#define RAD_TO_DEG 57.295779513082321
+
 #define D180 180
 #define MAX_FLOAT_PREC qPow(2.0, 24.0)
-#define GARMIN_DEG(x) ((x) < 0x800000 ? (qreal)(x) * (2 * D180) / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * (2 * D180) / MAX_FLOAT_PREC)
-#define GARMIN_RAD(x) ((x) < 0x800000 ? (qreal)(x) * (2 * M_PI) / MAX_FLOAT_PREC : (qreal)((x) - 0x1000000) * (2 * M_PI) / MAX_FLOAT_PREC)
+#define GARMIN_UNIT (2 * D180) / MAX_FLOAT_PREC
+#define GARMIN_DEG(x) ((x) < 0x800000 ? (double)(x) * GARMIN_UNIT : (double)((x) - 0x1000000) * GARMIN_UNIT)
+#define GARMIN_RAD(x) ((x) < 0x800000 ? (double)(x) * (2 * M_PI) / MAX_FLOAT_PREC : (double)((x) - 0x1000000) * (2 * M_PI) / MAX_FLOAT_PREC)
 
-#define gar_endian(t, x) (t)(x) // little endian platform: just return the argument
-#define gar_load(t, x) (t)(x)   // load argument x of type t - noop with proper cast
+#define gar_endian(t, x) (t)(x)  // little endian platform: just return the argument
+#define gar_load(t, x) (t)(x)    // load argument x of type t - noop with proper cast
 
 // load argument of type t from pointer p
-#define gar_ptr_load(t, p) __gar_ptr_load_##t((const uint8_t *)(p))
-#define __gar_ptr_load_int16_t(p) (*((int16_t *)(p)))
-#define __gar_ptr_load_uint16_t(p) (*((uint16_t *)(p)))
+#define gar_ptr_load(t, p) __gar_ptr_load_##t((const uint8_t*)(p))
+#define __gar_ptr_load_int16_t(p) (*((int16_t*)(p)))
+#define __gar_ptr_load_uint16_t(p) (*((uint16_t*)(p)))
 #define __gar_ptr_load_int24_t(p) (__gar_ptr_load_int32_t(p) & 0x00FFFFFFu)
 #define __gar_ptr_load_uint24_t(p) (__gar_ptr_load_quint32(p) & 0x00FFFFFFu)
-#define __gar_ptr_load_int32_t(p) (*((int32_t *)(p)))
-#define __gar_ptr_load_quint32(p) (*((quint32 *)(p)))
+#define __gar_ptr_load_int32_t(p) (*((int32_t*)(p)))
+#define __gar_ptr_load_quint32(p) (*((quint32*)(p)))
 
 typedef quint8 quint24[3];
 
-struct sign_info_t
-{
+// PJ_UV.u: longitude or easting (depending on use)
+// PJ_UV.v: latitude or northing (depending on use)
+typedef struct {
+  double u, v;
+} PJ_UV;
+
+struct sign_info_t {
   quint32 sign_info_bits = 2;
   bool x_has_sign = true;
   bool nx = false;
@@ -67,60 +78,101 @@ struct sign_info_t
   bool ny = false;
 };
 
-static QString printHex(const quint8 *pData, int len)
-{
-  QByteArray byteArray(reinterpret_cast<const char *>(pData), len);
-  QString str = byteArray.toHex(' '); // с интервал между байтовете
+void printInt8(const char* label, qint8 val) {
+  printf("%30s %i\n", label, val);
+}
+void printUInt8(const char* label, quint8 val) {
+  printf("%30s %02X\n", label, val);
+}
+void printInt16(const char* label, qint16 val) {
+  printf("%30s %i\n", label, val);
+}
+void printUInt16(const char* label, quint16 val) {
+  printf("%30s %04X\n", label, val);
+}
+void printInt32(const char* label, qint32 val) {
+  printf("%30s %i\n", label, val);
+}
+void printUInt32(const char* label, quint32 val) {
+  printf("%30s %08X\n", label, val);
+}
+
+void printUInt24(const char* label, quint24 val) {
+  qint32 tmp = val[0] | val[1] << 8 | val[2] << 16;
+  printf("%30s %f (0x%06X, %i)\n", label, GARMIN_DEG(tmp), tmp, tmp);
+}
+
+void printArrayUInt8(const char* label, quint8* array, int size) {
+  printf("%30s ", label);
+  for (int i = 0; i < size; i++) {
+    printf("%02X ", array[i]);
+  }
+  printf("\n");
+}
+
+void printArrayInt8(const char* label, char* array, int size) {
+  printf("%30s ", label);
+  for (int i = 0; i < size; i++) {
+    printf("%02X ", array[i]);
+  }
+  printf("| %s\n", QString(QByteArray(array, size)).toUtf8().data());
+}
+
+void printArrayInt8(const char* label, qint8* array, int size) {
+  printf("%30s ", label);
+  for (int i = 0; i < size; i++) {
+    printf("%02X ", array[i]);
+  }
+  printf("\n");
+}
+
+static QString printHex(const quint8* pData, int len) {
+  QByteArray byteArray(reinterpret_cast<const char*>(pData), len);
+  QString str = byteArray.toHex(' ');  // с интервал между байтовете
   return str;
 }
 
-class CFileExt : public QFile
-{
-public:
-  CFileExt(const QString &filename) : QFile(filename), mapped(nullptr) { cnt++; }
-  ~CFileExt() { cnt--; }
+// class QFile : public QFile {
+//  public:
+//   QFile(const QString& filename) : QFile(filename), mapped(nullptr) { cnt++; }
+//   ~QFile() { cnt--; }
 
-  // data access function
-  const char *data(qint64 offset, qint64 s)
-  {
-    uchar *p = map(offset, s);
-    return (const char *)p;
-  }
+//   // data access function
+//   const char* data(qint64 offset, qint64 s) {
+//     uchar* p = map(offset, s);
+//     return (const char*)p;
+//   }
 
-private:
-  inline static int cnt = 0;
+//  private:
+//   inline static int cnt = 0;
 
-  uchar *mapped;
-  QSet<uchar *> mappedSections;
+//   uchar* mapped;
+//   QSet<uchar*> mappedSections;
+// };
+
+class CException : public QException {
+ public:
+  CException(const QString& msg) : msg(msg) {}
+
+  operator const QString&() const { return msg; }
+  QString msg;
 };
 
-class IGarminStrTbl : public QObject
-{
-public:
-  IGarminStrTbl(const quint16 codepage, const quint8 mask, QObject *parent) : QObject(parent), codepage(codepage), mask(mask)
-  {
-    if (codepage != 0)
-    {
-      if (1250 <= codepage && codepage <= 1258)
-      {
+class IGarminStrTbl : public QObject {
+ public:
+  IGarminStrTbl(const quint16 codepage, const quint8 mask, QObject* parent) : QObject(parent), codepage(codepage), mask(mask) {
+    if (codepage != 0) {
+      if (1250 <= codepage && codepage <= 1258) {
         char strcp[64];
         sprintf(strcp, "Windows-%i", codepage);
         codec = QTextCodec::codecForName(strcp);
-      }
-      else if (codepage == 950)
-      {
+      } else if (codepage == 950) {
         codec = QTextCodec::codecForName("Big5");
-      }
-      else if (codepage == 850)
-      {
+      } else if (codepage == 850) {
         codec = QTextCodec::codecForName("IBM 850");
-      }
-      else if (codepage == 65001)
-      {
+      } else if (codepage == 65001) {
         codec = QTextCodec::codecForName("UTF-8");
-      }
-      else
-      {
+      } else {
         qDebug() << "Unknown codepage:" << codepage << "0x" << Qt::hex << codepage;
         codec = QTextCodec::codecForName("Latin1");
       }
@@ -139,85 +191,75 @@ public:
   }
   virtual ~IGarminStrTbl() {};
 
-  enum type_e
-  {
-    norm,
-    poi,
-    net
-  };
+  enum type_e { norm, poi, net };
 
-  void registerLBL1(const quint32 offset, const quint32 size, const quint8 shift)
-  {
+  void registerLBL1(const quint32 offset, const quint32 size, const quint8 shift) {
     offsetLBL1 = offset;
     sizeLBL1 = size;
     addrshift1 = shift;
   }
-  void registerLBL6(const quint32 offset, const quint32 size)
-  {
+  void registerLBL6(const quint32 offset, const quint32 size) {
     offsetLBL6 = offset;
     sizeLBL6 = size;
   }
-  void registerNET1(const quint32 offset, const quint32 size, const quint8 shift)
-  {
+  void registerNET1(const quint32 offset, const quint32 size, const quint8 shift) {
     offsetNET1 = offset;
     sizeNET1 = size;
     addrshift2 = shift;
   }
 
-  virtual void get(CFileExt &file, quint32 offset, type_e t, QStringList &info) = 0;
+  virtual void get(QFile& file, quint32 offset, type_e t, QStringList& info) = 0;
 
-protected:
-  void readFile(CFileExt &file, quint32 offset, quint32 size, QByteArray &data)
-  {
-    if (offset + size > file.size())
-    {
+ protected:
+  void readFile(QFile& file, quint32 offset, quint32 size, QByteArray& data) {
+    if (offset + size > static_cast<quint32>(file.size())) {
+      data.clear();
       return;
     }
 
-    data = QByteArray::fromRawData(file.data(offset, size), size);
+    if (!file.seek(offset)) {
+      data.clear();
+      return;
+    }
+
+    data = file.read(size);
+    if (data.size() != static_cast<qint64>(size)) {
+      return;
+    }
     // if mask == 0, no xor is necessary
-    if (mask == 0)
-    {
+    if (mask == 0) {
       return;
     }
 
-    quint64 *p64 = (quint64 *)data.data();
-    for (quint32 i = 0; i < size / 8; ++i)
-    {
+    quint64* p64 = (quint64*)data.data();
+    for (quint32 i = 0; i < size / 8; ++i) {
       *p64++ ^= mask64;
     }
     quint32 rest = size % 8;
-    quint8 *p = (quint8 *)p64;
+    quint8* p = (quint8*)p64;
 
-    for (quint32 i = 0; i < rest; ++i)
-    {
+    for (quint32 i = 0; i < rest; ++i) {
       *p++ ^= mask;
     }
   }
 
-  quint32 calcOffset(CFileExt &file, const quint32 offset, type_e t)
-  {
+  quint32 calcOffset(QFile& file, const quint32 offset, type_e t) {
     quint32 newOffset = offset;
 
-    if (t == poi)
-    {
+    if (t == poi) {
       QByteArray buffer;
       readFile(file, offsetLBL6 + offset, sizeof(quint32), buffer);
       newOffset = gar_ptr_load(quint32, buffer.data());
       newOffset = (newOffset & 0x003FFFFF);
-    }
-    else if (t == net)
-    {
-      if (offsetNET1 == 0)
-      {
+    } else if (t == net) {
+      if (offsetNET1 == 0) {
         return 0xFFFFFFFF;
       }
 
       QByteArray data;
       readFile(file, offsetNET1 + (offset << addrshift2), sizeof(quint32), data);
       newOffset = gar_ptr_load(quint32, data.data());
-      if (newOffset & 0x00400000)
-      {
+      if (newOffset & 0x00400000) {
         return 0xFFFFFFFF;
       }
       newOffset = (newOffset & 0x003FFFFF);
@@ -227,24 +269,18 @@ protected:
     return newOffset;
   }
 
-  QString processLabel(const char *buffer, unsigned lastSeperator)
-  {
+  QString processLabel(const char* buffer, unsigned lastSeperator) {
     QString label;
-    if (codepage != 0)
-    {
+    if (codepage != 0) {
       label = codec->toUnicode(buffer);
-    }
-    else
-    {
+    } else {
       label = buffer;
     }
 
-    if (lastSeperator == 0x1F)
-    {
+    if (lastSeperator == 0x1F) {
       bool ok = false;
       qreal ele = label.toDouble(&ok);
-      if (ok)
-      {
+      if (ok) {
         QString val, unit;
         label = val + " " + unit;
       }
@@ -261,32 +297,28 @@ protected:
   quint8 addrshift1 = 0;
   quint8 addrshift2 = 0;
   quint16 codepage;
-  QTextCodec *codec = nullptr;
+  QTextCodec* codec = nullptr;
   const quint8 mask;
   quint32 mask32;
   quint64 mask64;
   char buffer[1025];
 };
 
-class CGarminStrTbl6 : public IGarminStrTbl
-{
-public:
-  CGarminStrTbl6(const quint16 codepage, const quint8 mask, QObject *parent) : IGarminStrTbl(codepage, mask, parent) {};
+class CGarminStrTbl6 : public IGarminStrTbl {
+ public:
+  CGarminStrTbl6(const quint16 codepage, const quint8 mask, QObject* parent) : IGarminStrTbl(codepage, mask, parent) {};
   virtual ~CGarminStrTbl6() {};
 
-  void get(CFileExt &file, quint32 offset, type_e t, QStringList &labels) override
-  {
+  void get(QFile& file, quint32 offset, type_e t, QStringList& labels) override {
     labels.clear();
 
     offset = calcOffset(file, offset, t);
 
-    if (offset == 0xFFFFFFFF)
-    {
+    if (offset == 0xFFFFFFFF) {
       return;
     }
 
-    if (offset > (quint32)sizeLBL1)
-    {
+    if (offset > (quint32)sizeLBL1) {
       return;
     }
 
@@ -301,249 +333,134 @@ public:
 
     readFile(file, offsetLBL1 + offset, size, data);
 
-    p = (quint8 *)data.data();
+    p = (quint8*)data.data();
 
     fill();
 
     unsigned lastSeperator = 0;
-    while (idx < (sizeof(buffer) - 1))
-    {
+    while (idx < (sizeof(buffer) - 1)) {
       c1 = reg >> 26;
       reg <<= 6;
       bits -= 6;
       fill();
       // terminator
-      if (c1 > 0x2F)
-      {
+      if (c1 > 0x2F) {
         break;
       }
 
       c2 = str6tbl1[c1];
-      if (c2 == 0)
-      {
-        if (c1 == 0x1C)
-        {
+      if (c2 == 0) {
+        if (c1 == 0x1C) {
           c1 = reg >> 26;
           reg <<= 6;
           bits -= 6;
           fill();
           buffer[idx++] = str6tbl2[c1];
-        }
-        else if (c1 == 0x1B)
-        {
+        } else if (c1 == 0x1B) {
           c1 = reg >> 26;
           reg <<= 6;
           bits -= 6;
           fill();
           buffer[idx++] = str6tbl3[c1];
-        }
-        else if (c1 > 0x1C && c1 < 0x20)
-        {
+        } else if (c1 > 0x1C && c1 < 0x20) {
           lastSeperator = c1;
           buffer[idx] = 0;
-          if (strlen(buffer))
-          {
+          if (strlen(buffer)) {
             labels << processLabel(buffer, lastSeperator);
           }
           idx = 0;
           buffer[0] = 0;
         }
-      }
-      else
-      {
+      } else {
         buffer[idx++] = str6tbl1[c1];
       }
     }
 
     buffer[idx] = 0;
-    if (strlen(buffer))
-    {
+    if (strlen(buffer)) {
       labels << processLabel(buffer, lastSeperator);
     }
   }
 
-private:
-  inline static const char str6tbl1[] = {' ', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 0, 0, 0, 0, 0, '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 0, 0, 0, 0, 0, 0};
-  inline static const char str6tbl2[] = {'@', '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.', '/', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ':', ';', '<', '=', '>', '?', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '[', '\\', ']', '^', '_'};
+ private:
+  inline static const char str6tbl1[] = {' ', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W',
+                                         'X', 'Y', 'Z', 0,   0,   0,   0,   0,   '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 0,   0,   0,   0,   0,   0};
+  inline static const char str6tbl2[] = {'@', '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.', '/', 0, 0, 0, 0,   0,    0,   0,   0,
+                                         0,   0,   ':', ';', '<', '=', '>', '?',  0,   0,   0,   0,   0,   0,   0,   0,   0, 0, 0, '[', '\\', ']', '^', '_'};
   inline static const char str6tbl3[] = {'`', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'};
 
-  void fill()
-  {
+  void fill() {
     quint32 tmp;
-    if (bits < 6)
-    {
+    if (bits < 6) {
       tmp = *p++;
       reg |= tmp << (24 - bits);
       bits += 8;
     }
   }
 
-  quint32 reg = 0;           // temp shift reg buffer
-  quint32 bits = 0;          // bits in buffer
-  const quint8 *p = nullptr; // pointer to current data;
+  quint32 reg = 0;            // temp shift reg buffer
+  quint32 bits = 0;           // bits in buffer
+  const quint8* p = nullptr;  // pointer to current data;
 };
 
-class CGarminStrTblUtf8 : public IGarminStrTbl
-{
-public:
-  CGarminStrTblUtf8(const quint16 codepage, const quint8 mask, QObject *parent) : IGarminStrTbl(codepage, mask, parent) {};
+class CGarminStrTblUtf8 : public IGarminStrTbl {
+ public:
+  CGarminStrTblUtf8(const quint16 codepage, const quint8 mask, QObject* parent) : IGarminStrTbl(codepage, mask, parent) {};
   virtual ~CGarminStrTblUtf8() {};
 
-  void get(CFileExt &file, quint32 offset, type_e t, QStringList &labels) override
-  {
+  void get(QFile& file, quint32 offset, type_e t, QStringList& labels) override {
     labels.clear();
     offset = calcOffset(file, offset, t);
 
-    if (offset == 0xFFFFFFFF)
-    {
+    if (offset == 0xFFFFFFFF) {
       return;
     }
 
-    if (offset > (quint32)sizeLBL1)
-    {
+    if (offset > (quint32)sizeLBL1) {
       return;
     }
 
     QByteArray data;
     quint32 size = (sizeLBL1 - offset) < 200 ? (sizeLBL1 - offset) : 200;
     readFile(file, offsetLBL1 + offset, size, data);
-    char *lbl = data.data();
+    char* lbl = data.data();
 
-    char *pBuffer = buffer;
+    char* pBuffer = buffer;
     *pBuffer = 0;
 
     unsigned lastSeperator = 0;
-    while (*lbl != 0)
-    {
-      if ((unsigned)*lbl >= 0x1B && (unsigned)*lbl <= 0x1F)
-      {
+    while (*lbl != 0) {
+      if ((unsigned)*lbl >= 0x1B && (unsigned)*lbl <= 0x1F) {
         lastSeperator = *lbl;
         *pBuffer = 0;
-        if (strlen(buffer))
-        {
+        if (strlen(buffer)) {
           labels << processLabel(buffer, lastSeperator);
           pBuffer = buffer;
           *pBuffer = 0;
         }
         ++lbl;
         continue;
-      }
-      else if ((unsigned)*lbl < 0x07)
-      {
+      } else if ((unsigned)*lbl < 0x07) {
         ++lbl;
         continue;
-      }
-      else
-      {
+      } else {
         *pBuffer++ = *lbl++;
       }
     }
 
     *pBuffer = 0;
-    if (strlen(buffer))
-    {
+    if (strlen(buffer)) {
       labels << processLabel(buffer, lastSeperator);
     }
   }
 };
 
-class CGarminPoint
-{
-public:
+class CGarminPoint {
+ public:
   CGarminPoint() = default;
   virtual ~CGarminPoint() = default;
-
-  quint32 decode1(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData)
-  {
-    // if (pData[3] & 0x80)
-    // {
-    //   hasSubType = true;
-    //   qDebug() << "hasSubType:" << printHex(pData, sizeof(pData) + 1);
-    // }
-    type = (quint16)(*pData) << 8;
-
-    ++pData;
-
-    lbl_ptr = gar_ptr_load(uint24_t, pData);
-
-    hasSubType = lbl_ptr & 0x00800000;
-    // hasSubType = lbl_ptr & 0x00000080;
-    isLbl6 = lbl_ptr & 0x00400000;
-    lbl_ptr = lbl_ptr & 0x003FFFFF;
-
-    pData += 3;
-
-    qint16 dLng = gar_ptr_load(int16_t, pData);
-    pData += 2;
-    qint16 dLat = gar_ptr_load(int16_t, pData);
-    pData += 2;
-
-    qint32 x1 = ((qint32)dLng << shift) + iCenterLon;
-    qint32 y1 = ((qint32)dLat << shift) + iCenterLat;
-    pos = QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
-
-    if (hasSubType)
-    {
-      // auto st = pData[0];
-      // qDebug() << "hasSubType st:" ;
-      // qDebug() << "hasSubType:" << printHex(pData, sizeof(pData) + 1) << printHex(&st, 1);
-
-      type |= *pData;
-      return 9;
-    }
-
-    return 8;
-  }
-
-  quint32 decodeEx(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData, const quint8 *pEnd)
-  {
-    quint32 byte_size = 6;
-    quint8 subtype;
-
-    // qDebug() << "FIXME:" << printHex(pData, 4);
-
-    // @todo: fixme: if (lbl3 & 0x80) == 128 -> contains a subtype
-    // This is where Mechalas is incorrect: it is not the bit 8 of first byte, but bit 8 of the 4th byte
-    type = (quint16)(*pData) << 8;
-    ++pData;
-    subtype = (quint16)(*pData);
-    ++pData;
-
-    type = 0x10000 + type + (subtype & 0x1F);
-
-    /*
-    subtype = (quint8)(pData[3]); // съдържанието на четвъртият байт
-    pData += 2;
-    */
-
-    if (subtype & 0x80)
-    {
-      hasSubType = true;
-      byte_size += 1;
-    }
-
-    qint16 dLng = gar_ptr_load(int16_t, pData);
-    pData += 2;
-    qint16 dLat = gar_ptr_load(int16_t, pData);
-    pData += 2;
-
-    qint32 x1, y1;
-
-    x1 = ((qint32)dLng << shift) + iCenterLon;
-    y1 = ((qint32)dLat << shift) + iCenterLat;
-    pos = QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
-
-    if (subtype & 0x20)
-    {
-      byte_size += 3;
-      lbl_ptr = gar_ptr_load(uint24_t, pData);
-      isLbl6 = lbl_ptr & 0x00400000;
-      lbl_ptr &= 0x003FFFFF;
-    }
-
-    return byte_size;
-  }
-
+  quint32 decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8* pData);
+  quint32 decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8* pData, const quint8* pEnd);
   bool hasLabel() const { return !labels.isEmpty(); }
   quint32 type = 0;
   bool isLbl6 = false;
@@ -553,974 +470,864 @@ public:
   quint32 lbl_ptr = 0xFFFFFFFF;
 };
 
+quint32 CGarminPoint::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8* pData) {
+  // if (pData[3] & 0x80)
+  // {
+  //   hasSubType = true;
+  //   qDebug() << "hasSubType:" << printHex(pData, sizeof(pData) + 1);
+  // }
+  type = (quint16)(*pData) << 8;
+
+  ++pData;
+
+  lbl_ptr = gar_ptr_load(uint24_t, pData);
+
+  hasSubType = lbl_ptr & 0x00800000;
+  // hasSubType = lbl_ptr & 0x00000080;
+  isLbl6 = lbl_ptr & 0x00400000;
+  lbl_ptr = lbl_ptr & 0x003FFFFF;
+
+  pData += 3;
+
+  qint16 dLng = gar_ptr_load(int16_t, pData);
+  pData += 2;
+  qint16 dLat = gar_ptr_load(int16_t, pData);
+  pData += 2;
+
+  qint32 x1 = ((qint32)dLng << shift) + iCenterLon;
+  qint32 y1 = ((qint32)dLat << shift) + iCenterLat;
+  pos = QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+
+  if (hasSubType) {
+    // auto st = pData[0];
+    // qDebug() << "hasSubType st:" ;
+    // qDebug() << "hasSubType:" << printHex(pData, sizeof(pData) + 1) << printHex(&st, 1);
+
+    type |= *pData;
+    return 9;
+  }
+
+  return 8;
+}
+
+quint32 CGarminPoint::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8* pData, const quint8* pEnd) {
+  quint32 byte_size = 6;
+  quint8 subtype;
+
+  // qDebug() << "FIXME:" << printHex(pData, 4);
+
+  // @todo: fixme: if (lbl3 & 0x80) == 128 -> contains a subtype
+  // This is where Mechalas is incorrect: it is not the bit 8 of first byte, but bit 8 of the
+  // 4th byte
+  type = (quint16)(*pData) << 8;
+  ++pData;
+  subtype = (quint16)(*pData);
+  ++pData;
+
+  type = 0x10000 + type + (subtype & 0x1F);
+
+  /*
+  subtype = (quint8)(pData[3]);
+  pData += 2;
+  */
+
+  if (subtype & 0x80) {
+    hasSubType = true;
+    byte_size += 1;
+  }
+
+  qint16 dLng = gar_ptr_load(int16_t, pData);
+  pData += 2;
+  qint16 dLat = gar_ptr_load(int16_t, pData);
+  pData += 2;
+
+  qint32 x1, y1;
+
+  x1 = ((qint32)dLng << shift) + iCenterLon;
+  y1 = ((qint32)dLat << shift) + iCenterLat;
+  pos = QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+
+  if (subtype & 0x20) {
+    byte_size += 3;
+    lbl_ptr = gar_ptr_load(uint24_t, pData);
+    isLbl6 = lbl_ptr & 0x00400000;
+    lbl_ptr &= 0x003FFFFF;
+  }
+
+  return byte_size;
+}
+
 // bitstream reader
-class CShiftReg
-{
-public:
-  CShiftReg(const quint8 *pData, quint32 n, quint32 bx, quint32 by, bool extra_bit, sign_info_t &si)
-      : reg(0),
-        pData(pData),
-        bytes(n),
-        xmask(0xFFFFFFFF),
-        ymask(0xFFFFFFFF),
-        xsign(1),
-        ysign(1),
-        xsign2(2),
-        ysign2(2),
-        bits(0),
-        bits_per_x(bx),
-        bits_per_y(by),
-        bits_per_coord(bx + by + (extra_bit ? 1 : 0)),
-        sinfo(si),
-        extraBit(extra_bit)
-  {
-    // create bit masks
-    xmask = (xmask << (32 - bx)) >> (32 - bx);
-    ymask = (ymask << (32 - by)) >> (32 - by);
+class CShiftReg {
+ public:
+  CShiftReg(const quint8* pData, quint32 n, quint32 bx, quint32 by, bool extra_bit, sign_info_t& si);
 
-    xsign <<= (bits_per_x - 1);
-    ysign <<= (bits_per_y - 1);
-    xsign2 = xsign << 1;
-    ysign2 = ysign << 1;
+  bool get(qint32& x, qint32& y);
 
-    // add sufficient bytes for the first coord. pair
-    fill(bits_per_coord + si.sign_info_bits);
-
-    // get rid of sign setup bytes
-    reg >>= si.sign_info_bits;
-    bits -= si.sign_info_bits;
-  }
-
-  bool get(qint32 &x, qint32 &y)
-  {
-    x = y = 0;
-    if (bits < (bits_per_coord))
-    {
-      return false;
-    }
-
-    // don't know what to do with it -> skip extra bit
-    if (extraBit)
-    {
-      reg >>= 1;
-      bits -= 1;
-    }
-
-    if (sinfo.x_has_sign)
-    {
-      qint32 tmp = 0;
-      while (1)
-      {
-        tmp = reg & xmask;
-        if (tmp != xsign)
-        {
-          break;
-        }
-        x += tmp - 1;
-        reg >>= bits_per_x;
-        bits -= bits_per_x;
-        fill(bits_per_y + bits_per_x);
-      }
-      if (tmp < xsign)
-      {
-        x += tmp;
-      }
-      else
-      {
-        x = tmp - (xsign2)-x;
-      }
-    }
-    else
-    {
-      x = reg & xmask;
-      if (sinfo.nx)
-      {
-        x = -x;
-      }
-    }
-    reg >>= bits_per_x;
-    bits -= bits_per_x;
-
-    // take y coord., add sign if necessary, shift register by bits per y coord.
-    if (sinfo.y_has_sign)
-    {
-      qint32 tmp = 0;
-      while (1)
-      {
-        tmp = reg & ymask;
-        if (tmp != ysign)
-        {
-          break;
-        }
-        y += tmp - 1;
-        reg >>= bits_per_y;
-        bits -= bits_per_y;
-        fill(bits_per_y);
-      }
-      if (tmp < ysign)
-      {
-        y += tmp;
-      }
-      else
-      {
-        y = tmp - (ysign2)-y;
-      }
-    }
-    else
-    {
-      y = reg & ymask;
-      if (sinfo.ny)
-      {
-        y = -y;
-      }
-    }
-    reg >>= bits_per_y;
-    bits -= bits_per_y;
-
-    // fill register until it has enough bits for one coord. pair again
-    fill(bits_per_coord);
-    return true;
-  }
-
-private:
-  void fill(quint32 b)
-  {
-    quint64 tmp = 0;
-    while ((bits < b) && bytes)
-    {
-#if (Q_BYTE_ORDER == Q_LITTLE_ENDIAN)
-      (quint8 &)tmp = *pData++;
-#else
-      tmp = *pData++;
-#endif
-      --bytes;
-
-      reg |= tmp << bits;
-      bits += 8;
-    }
-  }
-
+ private:
+  void fill(quint32 bits);
   // the register to work on
   quint64 reg;
   // the data stream to get data from
-  const quint8 *pData;
+  const quint8* pData;
 
-  quint32 bytes;         // bytes left in stream
-  quint32 xmask;         // bitmask x coord.
-  quint32 ymask;         // bitmask y coord.
-  qint32 xsign;          // sign bit for x value
-  qint32 ysign;          // sign bit for y value
-  qint32 xsign2;         // sign bit * 2 for x value
-  qint32 ysign2;         // sign bit * 2 for y value
-  quint8 bits;           // total bits in register
-  quint8 bits_per_x;     // bits per x coord.
-  quint8 bits_per_y;     // bits per y coord.
-  quint8 bits_per_coord; // bits per coord.
+  quint32 bytes;          // bytes left in stream
+  quint32 xmask;          // bitmask x coord.
+  quint32 ymask;          // bitmask y coord.
+  qint32 xsign;           // sign bit for x value
+  qint32 ysign;           // sign bit for y value
+  qint32 xsign2;          // sign bit * 2 for x value
+  qint32 ysign2;          // sign bit * 2 for y value
+  quint8 bits;            // total bits in register
+  quint8 bits_per_x;      // bits per x coord
+  quint8 bits_of_byte;    // used bits of first byte
+  quint8 bits_per_y;      // bits per y coord
+  quint8 bits_per_coord;  // bits per coord.
 
-  sign_info_t &sinfo;
+  sign_info_t& sinfo;
 
   bool extraBit;
 };
 
-class CGarminPolygon
-{
-public:
+CShiftReg::CShiftReg(const quint8* pData, quint32 n, quint32 bx, quint32 by, bool extra_bit, sign_info_t& si)
+    : reg(0),
+      pData(pData),
+      bytes(n),
+      xmask(0xFFFFFFFF),
+      ymask(0xFFFFFFFF),
+      xsign(1),
+      ysign(1),
+      xsign2(2),
+      ysign2(2),
+      bits(0),
+      bits_per_x(bx),
+      bits_per_y(by),
+      bits_per_coord(bx + by + (extra_bit ? 1 : 0)),
+      sinfo(si),
+      extraBit(extra_bit) {
+  // create bit masks
+  xmask = (xmask << (32 - bx)) >> (32 - bx);
+  ymask = (ymask << (32 - by)) >> (32 - by);
+
+  xsign <<= (bits_per_x - 1);
+  ysign <<= (bits_per_y - 1);
+  xsign2 = xsign << 1;
+  ysign2 = ysign << 1;
+
+  // add sufficient bytes for the first coord. pair
+  fill(bits_per_coord + si.sign_info_bits);
+
+  // get rid of sign setup bytes
+  reg >>= si.sign_info_bits;
+  bits -= si.sign_info_bits;
+}
+
+bool CShiftReg::get(qint32& x, qint32& y) {
+  x = y = 0;
+  if (bits < (bits_per_coord)) {
+    return false;
+  }
+
+  // don't know what to do with it -> skip extra bit
+  if (extraBit) {
+    reg >>= 1;
+    bits -= 1;
+  }
+
+  if (sinfo.x_has_sign) {
+    qint32 tmp = 0;
+    while (1) {
+      tmp = reg & xmask;
+      if (tmp != xsign) {
+        break;
+      }
+      x += tmp - 1;
+      reg >>= bits_per_x;
+      bits -= bits_per_x;
+      fill(bits_per_y + bits_per_x);
+    }
+    if (tmp < xsign) {
+      x += tmp;
+    } else {
+      x = tmp - (xsign2)-x;
+    }
+  } else {
+    x = reg & xmask;
+    if (sinfo.nx) {
+      x = -x;
+    }
+  }
+  reg >>= bits_per_x;
+  bits -= bits_per_x;
+
+  // take y coord., add sign if neccessary, shift register by bits per y coord.
+  if (sinfo.y_has_sign) {
+    qint32 tmp = 0;
+    while (1) {
+      tmp = reg & ymask;
+      if (tmp != ysign) {
+        break;
+      }
+      y += tmp - 1;
+      reg >>= bits_per_y;
+      bits -= bits_per_y;
+      fill(bits_per_y);
+    }
+    if (tmp < ysign) {
+      y += tmp;
+    } else {
+      y = tmp - (ysign2)-y;
+    }
+  } else {
+    y = reg & ymask;
+    if (sinfo.ny) {
+      y = -y;
+    }
+  }
+  reg >>= bits_per_y;
+  bits -= bits_per_y;
+
+  // fill register until it has enought bits for one coord. pair again
+  fill(bits_per_coord);
+  return true;
+}
+
+void CShiftReg::fill(quint32 b) {
+  quint64 tmp = 0;
+  while ((bits < b) && bytes) {
+#if (Q_BYTE_ORDER == Q_LITTLE_ENDIAN)
+    (quint8&)tmp = *pData++;
+#else
+    tmp = *pData++;
+#endif
+    --bytes;
+
+    reg |= tmp << bits;
+    bits += 8;
+  }
+}
+
+class CGarminPolygon {
+ public:
   CGarminPolygon() = default;
   virtual ~CGarminPolygon() = default;
 
-  quint32 decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8 *pData, const quint8 *pEnd)
-  {
-    QString rawData = printHex(pData, sizeof(pData));
-    QString rawDataEnd = printHex(pEnd, sizeof(pEnd));
-    quint32 bytes_total = 10;
-    bool two_byte_len;  // bitstream has a two byte length
-    bool extra_bit;     // coordinates use extra bit - ??? have never seen it
-    quint16 bs_len = 0; // bitstream length
-    quint8 bs_info;     // base bit size info for coordinates
-    quint32 bx;         // bits per x coord
-    quint32 by;         // bits per y coord
-    const quint8 *const pStart = pData;
-
-    labels.clear();
-    coords.resize(0);
-    coords.reserve(maxVecSize);
-
-    /* poly_type
-      for polylines:
-        bit 0..5    type
-        bit 6       direction
-      for polygons:
-        bit 0..6    type
-        bit 7       bitstream_len is two bytes (true)
-     */
-    // qDebug() << "OPAAAA:" << printHex(pData, sizeof(pData));
-    type = *pData++;
-
-    two_byte_len = type & 0x80;
-
-    // тука трябва да има и подтипове
-    if (line)
-    {
-      direction = (type & 0x40);
-      type &= 0x3F;
-    }
-    else
-    {
-      type &= 0x7F;
-    }
-
-    /* label info
-        bit 0..21   off set into LBL section
-        bit 22      use extra bit for coordinates
-        bit 23      use label data of NET section
-     */
-    lbl_info = gar_ptr_load(uint24_t, pData);
-    lbl_in_NET = lbl_info & 0x800000;
-    extra_bit = lbl_info & 0x400000;
-    lbl_info = lbl_info & 0x3FFFFF;
-
-    pData += 3;
-
-    // delta longitude and latitude
-    dLng = gar_ptr_load(uint16_t, pData);
-    pData += 2;
-    dLat = gar_ptr_load(uint16_t, pData);
-    pData += 2;
-
-    // bitstream length
-    if (two_byte_len)
-    {
-      bs_len = gar_ptr_load(uint16_t, pData);
-      pData += 2;
-      bytes_total += bs_len + 1;
-    }
-    else
-    {
-#if (Q_BYTE_ORDER == Q_LITTLE_ENDIAN)
-      (quint8 &)bs_len = *pData++;
-#else
-      bs_len = *pData++;
-#endif
-      bytes_total += bs_len;
-    }
-    len = bs_len;
-    // qDebug() << "bs_len:" << bs_len;
-
-    if (pEnd && ((pStart + bytes_total) > pEnd))
-    {
-      return bytes_total;
-    }
-
-    /* bitstream info
-        bit 0..3    base bits longitude
-        bit 4..7    base bits latitude
-     */
-    bs_info = *pData++;
-
-    debugData = printHex(pData, bs_len);
-
-    // if(extra_bit) qWarning("extrabit");
-
-#ifdef DEBUG_SHOW_POLY_DATA_DECODE
-    qDebug() << "type:      " << type << Qt::hex;
-    qDebug() << "two byte:  " << two_byte_len;
-    qDebug() << "extra bit: " << extra_bit;
-    qDebug() << "dLng:      " << dLng;
-    qDebug() << "dLat:      " << dLat;
-    qDebug() << "len:       " << bs_len;
-    qDebug() << "info:      " << Qt::hex << bs_info;
-    qDebug() << "1st byte:  " << Qt::hex << *pData;
-    qDebug() << "bytes total" << bytes_total;
-    qDebug() << "data1      " << rawData;
-#endif
-
-    sign_info_t signinfo;
-    bits_per_coord(bs_info, *pData, bx, by, signinfo, false);
-
-    CShiftReg sr(pData, bs_len, bx, by, extra_bit, signinfo);
-    qint32 x1, y1, x = 0, y = 0;
-
-    bool isNegative = (iCenterLon >= 0x800000);
-    // first point
-    x1 = ((qint32)dLng << shift) + iCenterLon;
-    y1 = ((qint32)dLat << shift) + iCenterLat;
-
-    if (x1 >= 0x800000 && !isNegative)
-    {
-      x1 = 0x7fffff;
-    }
-
-    coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
-
-    // next points
-    while (sr.get(x, y))
-    {
-      x1 += (x << shift);
-      y1 += (y << shift);
-
-      if (x1 >= 0x800000 && !isNegative)
-      {
-        x1 = 0x7fffff;
-      }
-
-      coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
-    }
-    // qDebug() << "maxVecSize:" << maxVecSize << "|" << coords.size() << "| len:" << len << "| extra_bit:" << extra_bit << "| sinfo.x_has_sign:" << signinfo.x_has_sign;
-
-    if (maxVecSize < coords.size())
-    {
-      maxVecSize = coords.size();
-    }
-    if (coords.size() * 1.2 < maxVecSize)
-    {
-      coords.squeeze();
-    }
-
-    pixel = coords;
-
-    return bytes_total;
-  }
-
-  quint32 decodeEx(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8 *pData, const quint8 *pEnd)
-  {
-    quint32 bytes_total = 6;
-    quint16 bs_len = 0; // bitstream length
-    quint32 subtype;    // type and subtype
-    quint8 bs_info;     // base bit size info for coordinates
-    quint32 bx;         // bits per x coord
-    quint32 by;         // bits per y coord
-
-    direction = false; // reset
-    // @fixme: ne raboti pravilno kogato extended type 0x100+
-    // qDebug() << "direction/type" << rawData << Qt::hex << type << direction;
-
-    const quint8 *const pStart = pData;
-
-    labels.clear();
-    coords.resize(0);
-    coords.reserve(maxVecSize);
-
-    type = *pData++;
-    subtype = *pData++;
-
-    type = 0x10000 + (quint16(type) << 8) + (subtype & 0x1f);
-    hasV2Label = subtype & 0x20;
-    // delta longitude and latitude
-    dLng = gar_ptr_load(uint16_t, pData);
-    pData += 2;
-    dLat = gar_ptr_load(uint16_t, pData);
-    pData += 2;
-
-    if ((*pData & 0x1) == 0)
-    {
-      bs_len = gar_ptr_load(uint16_t, pData);
-      bs_len = (bs_len >> 2) - 1;
-      pData += 2;
-      bytes_total += 2;
-    }
-    else
-    {
-      bs_len = ((*pData) >> 1) - 1;
-      pData += 1;
-      bytes_total += 1;
-    }
-
-    bs_info = *pData++;
-    bytes_total += bs_len + 1;
-
-#ifdef DEBUG_SHOW_POLY_DATA_DECODE_EX
-    qDebug() << "type:      " << type << Qt::hex << type;
-    qDebug() << "dLng:      " << dLng;
-    qDebug() << "dLat:      " << dLat;
-    qDebug() << "len:       " << bs_len;
-    qDebug() << "info:      " << Qt::hex << bs_info;
-    qDebug() << "1st byte:  " << Qt::hex << *pData;
-    qDebug() << "bytes total" << bytes_total;
-#endif
-
-    sign_info_t signinfo;
-    bits_per_coord(bs_info, *pData, bx, by, signinfo, true);
-
-    // qDebug() << ">>" << bs_len << bytes_total << (pEnd - pStart);
-
-    // assert((pEnd - pStart) >= bytes_total);
-    if (((quint32)(pEnd - pStart)) < bytes_total)
-    {
-      return pEnd - pStart;
-    }
-
-    CShiftReg sr(pData, bs_len, bx, by, false, signinfo);
-    qint32 x1, y1, x = 0, y = 0;
-
-    bool isNegative = (iCenterLon >= 0x800000);
-    // first point
-    x1 = ((qint32)dLng << shift) + iCenterLon;
-    y1 = ((qint32)dLat << shift) + iCenterLat;
-
-    if (x1 >= 0x800000 && !isNegative)
-    {
-      x1 = 0x7fffff;
-    }
-
-    coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
-
-    // next points
-    while (sr.get(x, y))
-    {
-      x1 += (x << shift);
-      y1 += (y << shift);
-
-      if (x1 >= 0x800000 && !isNegative)
-      {
-        x1 = 0x7fffff;
-      }
-
-      // xy.u = GARMIN_RAD(x1);
-      // xy.v = GARMIN_RAD(y1);
-
-      // if(qAbs(xy.v) > 2*M_PI || qAbs(xy.u) > 2*M_PI)
-      // {
-      //    qDebug() << "bam";
-      //    qDebug() << xy.u << xy.v << pStart << pEnd << (pEnd - pStart) << (cnt + 1) << line;
-      //    //assert(0);
-      // }
-      // #ifdef DEBUG_SHOW_POLY_PTS
-      // qDebug() << xy.u << xy.v << (RAD_TO_DEG * xy.u) << (RAD_TO_DEG * xy.v);
-      // #endif
-      coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
-    }
-
-    if (hasV2Label)
-    {
-      quint32 offset = gar_ptr_load(uint24_t, pData + bs_len);
-      bytes_total += 3;
-      lbl_info = offset & 0x3FFFFF;
-    }
-    else
-    {
-      lbl_info = 0;
-    }
-
-    if (maxVecSize < coords.size())
-    {
-      maxVecSize = coords.size();
-    }
-    if (coords.size() * 1.2 < maxVecSize)
-    {
-      coords.squeeze();
-    }
-
-    pixel = coords;
-
-    return bytes_total;
-  }
+  quint32 decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8* pData, const quint8* pEnd);
+  quint32 decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8* pData, const quint8* pEnd);
 
   bool hasLabel() const { return !labels.isEmpty(); }
 
   quint32 type = 0;
-  bool direction = false;  // direction of line (polyline, only)
-  quint32 lbl_info = 0;    // the label offset
-  bool lbl_in_NET = false; // true if label offset has to be used in NET section
-  bool hasV2Label = false; //
-  qint16 dLng = 0;         // delta longitude from subdivision center
-  qint16 dLat = 0;         // delta latitude from subdivision center
-  QPolygonF pixel;         // the actual polyline points as [pixel]. After decode1() or decode2() the content will be the same as coords. It is up to the render object to convert it into pixel coordinates
-  QPolygonF coords;        // the actual polyline points as longitude / latitude [rad]
+  bool direction = false;   // direction of line (polyline, only)
+  quint32 lbl_info = 0;     // the label offset
+  bool lbl_in_NET = false;  // true if label offset has to be used in NET section
+  bool hasV2Label = false;  //
+  qint16 dLng = 0;          // delta longitude from subdivision center
+  qint16 dLat = 0;          // delta latitude from subdivision center
+  QPolygonF pixel;          // the actual polyline points as [pixel]. After decode1() or decode2() the
+                            // content will be the same as coords. It is up to the render object to convert
+                            // it into pixel coordinates
+  QPolygonF coords;         // the actual polyline points as longitude / latitude [rad]
   QStringList labels;
   inline static quint32 cnt = 0;
   inline static qint32 maxVecSize = 0;
   quint16 len = 0;
   QString debugData;
 
-private:
-  void bits_per_coord(quint8 base, quint8 bfirst, quint32 &bx, quint32 &by, sign_info_t &signinfo, bool isVer2)
-  {
-    bool x_sign_same, y_sign_same;
-
-    quint8 mask = 0x1;
-
-    // x_sign_same = bfirst & 0x1;
-    x_sign_same = bfirst & mask;
-    mask <<= 1;
-
-    if (x_sign_same)
-    {
-      signinfo.x_has_sign = false;
-      // signinfo.nx         = bfirst & 0x2;
-      signinfo.nx = bfirst & mask;
-      mask <<= 1;
-      ++signinfo.sign_info_bits;
-    }
-    else
-    {
-      signinfo.x_has_sign = true;
-    }
-    bx = bits_per_coord(base & 0x0F, signinfo.x_has_sign);
-
-    // y_sign_same = x_sign_same ? (bfirst & 0x04) : (bfirst & 0x02);
-    y_sign_same = bfirst & mask;
-    mask <<= 1;
-
-    if (y_sign_same)
-    {
-      signinfo.y_has_sign = false;
-      // signinfo.ny         = x_sign_same ? bfirst & 0x08 : bfirst & 0x04;
-      signinfo.ny = bfirst & mask;
-      mask <<= 1;
-      ++signinfo.sign_info_bits;
-    }
-    else
-    {
-      signinfo.y_has_sign = true;
-    }
-
-    by = bits_per_coord((base >> 4) & 0x0F, signinfo.y_has_sign);
-
-    // Determine extra bits.
-    if (isVer2)
-    {
-      ++signinfo.sign_info_bits;
-      if (bfirst & mask)
-      {
-        ++bx;
-        ++by;
-      }
-    }
-  }
-
-  int bits_per_coord(quint8 base, bool is_signed)
-  {
-    int n = 2;
-
-    if (base <= 9)
-    {
-      n += base;
-    }
-    else
-    {
-      n += (2 * base - 9);
-    }
-
-    if (is_signed)
-    {
-      ++n;
-    }
-    return n;
-  }
+ private:
+  void bits_per_coord(quint8 base, quint8 bfirst, quint32& bx, quint32& by, sign_info_t& signinfo, bool isVer2);
+  int bits_per_coord(quint8 base, bool is_signed);
 };
 
-class CMap : public QCoreApplication
-{
-public:
-  explicit CMap(int &argc, char **argv) : QCoreApplication(argc, argv)
-  {
-    QCommandLineParser parser;
-    parser.setApplicationDescription("qgimp 1.0");
-    parser.addHelpOption();
+quint32 CGarminPolygon::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8* pData, const quint8* pEnd) {
+  QString rawData = printHex(pData, sizeof(pData));
+  QString rawDataEnd = printHex(pEnd, sizeof(pEnd));
+  quint32 bytes_total = 10;
+  bool two_byte_len;   // bitstream has a two byte length
+  bool extra_bit;      // coordinates use extra bit - ??? have never seen it
+  quint16 bs_len = 0;  // bitstream length
+  quint8 bs_info;      // base bit size info for coordinates
+  quint32 bx;          // bits per x coord
+  quint32 by;          // bits per y coord
+  const quint8* const pStart = pData;
 
-    QCommandLineOption inputOption(QStringList() << "i" << "input", ".img input file", "input_file.img");
-    QCommandLineOption outputOption(QStringList() << "o" << "output", ".mp output file", "output_file.mp");
-    parser.addOption(inputOption);
-    parser.addOption(outputOption);
-    parser.process(this->arguments());
+  labels.clear();
+  coords.resize(0);
+  coords.reserve(maxVecSize);
 
-    if (!parser.isSet(inputOption))
-    {
-      qCritical() << "Option -i is required!";
-      parser.showHelp(1);
-    }
-    else
-    {
-      inputFile = parser.value("input");
-      QFileInfo inputFileInfo(inputFile);
+  /* poly_type
+    for polylines:
+      bit 0..5    type
+      bit 6       direction
+    for polygons:
+      bit 0..6    type
+      bit 7       bitstream_len is two bytes (true)
+   */
+  // qDebug() << "OPAAAA:" << printHex(pData, sizeof(pData));
+  type = *pData++;
 
-      if (!inputFileInfo.exists())
-      {
-        qCritical() << "Error: Input file does not exist:" << inputFile;
-        exit(1);
-      }
+  two_byte_len = type & 0x80;
 
-      if (!inputFileInfo.isReadable())
-      {
-        qCritical() << "Error: No permissions to read the file:" << inputFile;
-        exit(1);
-      }
-    }
-
-    if (!parser.isSet(outputOption))
-    {
-      qCritical() << "Option -o is required!";
-      parser.showHelp(1);
-    }
-    else
-    {
-      outputFile = parser.value("output");
-      QFileInfo outputFileInfo(outputFile);
-
-      if (outputFileInfo.exists())
-      {
-        QDateTime lastModified = outputFileInfo.lastModified();
-        QString timestamp = lastModified.toString("_yyyyMMdd_hhmmss");
-        QString baseName = outputFileInfo.completeBaseName();
-        QString suffix = outputFileInfo.suffix();
-        QString dir = outputFileInfo.path();
-
-        QString renamedFile = dir + "/" + baseName + timestamp + "." + suffix;
-
-        QFile::rename(outputFile, renamedFile);
-        qWarning() << "The existing file was renamed to:" << renamedFile;
-      }
-    }
-
-    of.setFileName(outputFile);
-    if (!of.open(QIODevice::WriteOnly | QIODevice::Text))
-    {
-      qCritical() << "Error opening output file:" << of.errorString();
-      exit(1);
-    }
-
-    codec = QTextCodec::codecForName("Windows-1251");
-    if (!codec)
-    {
-      qWarning("CP1251 codec not available");
-    }
-    // of.setBufferSize(16 * 1024);
-
-    CFileExt file(inputFile);
-    if (!file.open(QIODevice::ReadOnly))
-    {
-      return;
-    }
-
-    try
-    {
-      readBasics();
-      processPrimaryMapData();
-      printHeader();
-
-      int times = 0;
-      QVector<map_level_t>::const_iterator maplevel = maplevels.constBegin();
-      while (maplevel)
-      {
-        ++maplevel;
-        unsigned level = maplevel->level;
-
-        for (const subfile_desc_t &subfile : std::as_const(subfiles))
-        {
-          QByteArray rgndata;
-          readFile(file, subfile.parts["RGN"].offset, subfile.parts["RGN"].size, rgndata);
-          if (rgndata.length() == 0)
-          {
-            continue;
-          }
-
-          const QVector<subdiv_desc_t> &subdivs = subfile.subdivs;
-          for (const subdiv_desc_t &subdiv : subdivs)
-          {
-
-            if (subdiv.level != level)
-            {
-              // qDebug() << "Level does not exists (skip):" << level << subdiv.level;
-              continue;
-            }
-            ++times;
-
-            // if (times > 3)
-            // {
-            //   break;
-            // }
-
-            // qDebug() << "decodeRgn() times:" << times;
-            decodeRgn(file, subdiv, subfile.strtbl, rgndata, polylines, polygons, points, pois);
-          }
-        }
-
-        // if (times > 3)
-        // {
-        //   break;
-        // }
-
-        if (maplevels.constEnd() == maplevel)
-        {
-          break;
-        }
-      }
-
-      of.write(codec->fromUnicode(slPoints.join("\n")) + "\n");
-      of.write(codec->fromUnicode(slPois.join("\n")) + "\n");
-      of.write(codec->fromUnicode(slPolylines.join("\n")) + "\n");
-      of.write(codec->fromUnicode(slPolygons.join("\n")) + "\n");
-      of.write(codec->fromUnicode(slPoints2.join("\n")) + "\n");
-      of.write(codec->fromUnicode(slPois2.join("\n")) + "\n");
-      of.write(codec->fromUnicode(slPolylines2.join("\n")) + "\n");
-      of.write(codec->fromUnicode(slPolygons2.join("\n")) + "\n");
-      of.flush();
-    }
-    catch (const exce_t &e)
-    {
-      qDebug() << "Fatal error:" << e.msg;
-    }
-
-    file.close();
+  // тука трябва да има и подтипове
+  if (line) {
+    direction = (type & 0x40);
+    type &= 0x3F;
+  } else {
+    type &= 0x7F;
   }
 
-  virtual ~CMap()
-  {
-    if (of.isOpen())
-    {
-      of.flush();
-      of.close();
-    }
-    qDebug() << "✅ Done.";
+  /* label info
+      bit 0..21   off set into LBL section
+      bit 22      use extra bit for coordinates
+      bit 23      use label data of NET section
+   */
+  lbl_info = gar_ptr_load(uint24_t, pData);
+  lbl_in_NET = lbl_info & 0x800000;
+  extra_bit = lbl_info & 0x400000;
+  lbl_info = lbl_info & 0x3FFFFF;
+
+  pData += 3;
+
+  // delta longitude and latitude
+  dLng = gar_ptr_load(uint16_t, pData);
+  pData += 2;
+  dLat = gar_ptr_load(uint16_t, pData);
+  pData += 2;
+
+  // bitstream length
+  if (two_byte_len) {
+    bs_len = gar_ptr_load(uint16_t, pData);
+    pData += 2;
+    bytes_total += bs_len + 1;
+  } else {
+#if (Q_BYTE_ORDER == Q_LITTLE_ENDIAN)
+    (quint8&)bs_len = *pData++;
+#else
+    bs_len = *pData++;
+#endif
+    bytes_total += bs_len;
+  }
+  len = bs_len;
+  // qDebug() << "bs_len:" << bs_len;
+
+  if (pEnd && ((pStart + bytes_total) > pEnd)) {
+    return bytes_total;
   }
 
-private:
+  /* bitstream info
+      bit 0..3    base bits longitude
+      bit 4..7    base bits latitude
+   */
+  bs_info = *pData++;
+
+  debugData = printHex(pData, bs_len);
+
+  // if(extra_bit) qWarning("extrabit");
+
+#ifdef DEBUG_SHOW_POLY_DATA_DECODE
+  qDebug() << "type:      " << type << Qt::hex;
+  qDebug() << "two byte:  " << two_byte_len;
+  qDebug() << "extra bit: " << extra_bit;
+  qDebug() << "dLng:      " << dLng;
+  qDebug() << "dLat:      " << dLat;
+  qDebug() << "len:       " << bs_len;
+  qDebug() << "info:      " << Qt::hex << bs_info;
+  qDebug() << "1st byte:  " << Qt::hex << *pData;
+  qDebug() << "bytes total" << bytes_total;
+  qDebug() << "data1      " << rawData;
+#endif
+
+  sign_info_t signinfo;
+  bits_per_coord(bs_info, *pData, bx, by, signinfo, false);
+
+  CShiftReg sr(pData, bs_len, bx, by, extra_bit, signinfo);
+  qint32 x1, y1, x = 0, y = 0;
+
+  bool isNegative = (iCenterLon >= 0x800000);
+  // first point
+  x1 = ((qint32)dLng << shift) + iCenterLon;
+  y1 = ((qint32)dLat << shift) + iCenterLat;
+
+  if (x1 >= 0x800000 && !isNegative) {
+    x1 = 0x7fffff;
+  }
+
+  coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+
+  // next points
+  while (sr.get(x, y)) {
+    x1 += (x << shift);
+    y1 += (y << shift);
+
+    if (x1 >= 0x800000 && !isNegative) {
+      x1 = 0x7fffff;
+    }
+
+    coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+  }
+  // qDebug() << "maxVecSize:" << maxVecSize << "|" << coords.size() << "| len:" << len << "|
+  // extra_bit:" << extra_bit << "| sinfo.x_has_sign:" << signinfo.x_has_sign;
+
+  if (maxVecSize < coords.size()) {
+    maxVecSize = coords.size();
+  }
+  if (coords.size() * 1.2 < maxVecSize) {
+    coords.squeeze();
+  }
+
+  pixel = coords;
+
+  return bytes_total;
+}
+
+quint32 CGarminPolygon::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8* pData, const quint8* pEnd) {
+  quint32 bytes_total = 6;
+  quint16 bs_len = 0;  // bitstream length
+  quint32 subtype;     // type and subtype
+  quint8 bs_info;      // base bit size info for coordinates
+  quint32 bx;          // bits per x coord
+  quint32 by;          // bits per y coord
+
+  direction = false;  // reset
+  // @fixme: ne raboti pravilno kogato extended type 0x100+
+  // qDebug() << "direction/type" << rawData << Qt::hex << type << direction;
+
+  const quint8* const pStart = pData;
+
+  labels.clear();
+  coords.resize(0);
+  coords.reserve(maxVecSize);
+
+  type = *pData++;
+  subtype = *pData++;
+
+  type = 0x10000 + (quint16(type) << 8) + (subtype & 0x1f);
+  hasV2Label = subtype & 0x20;
+  // delta longitude and latitude
+  dLng = gar_ptr_load(uint16_t, pData);
+  pData += 2;
+  dLat = gar_ptr_load(uint16_t, pData);
+  pData += 2;
+
+  if ((*pData & 0x1) == 0) {
+    bs_len = gar_ptr_load(uint16_t, pData);
+    bs_len = (bs_len >> 2) - 1;
+    pData += 2;
+    bytes_total += 2;
+  } else {
+    bs_len = ((*pData) >> 1) - 1;
+    pData += 1;
+    bytes_total += 1;
+  }
+
+  bs_info = *pData++;
+  bytes_total += bs_len + 1;
+
+#ifdef DEBUG_SHOW_POLY_DATA_DECODE_EXT
+  qDebug() << "type:      " << type << Qt::hex << type;
+  qDebug() << "dLng:      " << dLng;
+  qDebug() << "dLat:      " << dLat;
+  qDebug() << "len:       " << bs_len;
+  qDebug() << "info:      " << Qt::hex << bs_info;
+  qDebug() << "1st byte:  " << Qt::hex << *pData;
+  qDebug() << "bytes total" << bytes_total;
+#endif
+
+  sign_info_t signinfo;
+  bits_per_coord(bs_info, *pData, bx, by, signinfo, true);
+
+  // qDebug() << ">>" << bs_len << bytes_total << (pEnd - pStart);
+
+  // assert((pEnd - pStart) >= bytes_total);
+  if (((quint32)(pEnd - pStart)) < bytes_total) {
+    return pEnd - pStart;
+  }
+
+  CShiftReg sr(pData, bs_len, bx, by, false, signinfo);
+  qint32 x1, y1, x = 0, y = 0;
+
+  bool isNegative = (iCenterLon >= 0x800000);
+  // first point
+  x1 = ((qint32)dLng << shift) + iCenterLon;
+  y1 = ((qint32)dLat << shift) + iCenterLat;
+
+  if (x1 >= 0x800000 && !isNegative) {
+    x1 = 0x7fffff;
+  }
+
+  coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+
+  // next points
+  while (sr.get(x, y)) {
+    x1 += (x << shift);
+    y1 += (y << shift);
+
+    if (x1 >= 0x800000 && !isNegative) {
+      x1 = 0x7fffff;
+    }
+
+    // xy.u = GARMIN_RAD(x1);
+    // xy.v = GARMIN_RAD(y1);
+
+    // if(qAbs(xy.v) > 2*M_PI || qAbs(xy.u) > 2*M_PI)
+    // {
+    //    qDebug() << "bam";
+    //    qDebug() << xy.u << xy.v << pStart << pEnd << (pEnd - pStart) << (cnt + 1) <<
+    //    line;
+    //    //assert(0);
+    // }
+    // #ifdef DEBUG_SHOW_POLY_PTS
+    // qDebug() << xy.u << xy.v << (RAD_TO_DEG * xy.u) << (RAD_TO_DEG * xy.v);
+    // #endif
+    coords << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+  }
+
+  if (hasV2Label) {
+    quint32 offset = gar_ptr_load(uint24_t, pData + bs_len);
+    bytes_total += 3;
+    lbl_info = offset & 0x3FFFFF;
+  } else {
+    lbl_info = 0;
+  }
+
+  if (maxVecSize < coords.size()) {
+    maxVecSize = coords.size();
+  }
+  if (coords.size() * 1.2 < maxVecSize) {
+    coords.squeeze();
+  }
+
+  pixel = coords;
+
+  return bytes_total;
+}
+
+void CGarminPolygon::bits_per_coord(quint8 base, quint8 bfirst, quint32& bx, quint32& by, sign_info_t& signinfo, bool isVer2) {
+  bool x_sign_same, y_sign_same;
+
+  quint8 mask = 0x1;
+
+  // x_sign_same = bfirst & 0x1;
+  x_sign_same = bfirst & mask;
+  mask <<= 1;
+
+  if (x_sign_same) {
+    signinfo.x_has_sign = false;
+    // signinfo.nx         = bfirst & 0x2;
+    signinfo.nx = bfirst & mask;
+    mask <<= 1;
+    ++signinfo.sign_info_bits;
+  } else {
+    signinfo.x_has_sign = true;
+  }
+  bx = bits_per_coord(base & 0x0F, signinfo.x_has_sign);
+
+  // y_sign_same = x_sign_same ? (bfirst & 0x04) : (bfirst & 0x02);
+  y_sign_same = bfirst & mask;
+  mask <<= 1;
+
+  if (y_sign_same) {
+    signinfo.y_has_sign = false;
+    // signinfo.ny         = x_sign_same ? bfirst & 0x08 : bfirst & 0x04;
+    signinfo.ny = bfirst & mask;
+    mask <<= 1;
+    ++signinfo.sign_info_bits;
+  } else {
+    signinfo.y_has_sign = true;
+  }
+
+  by = bits_per_coord((base >> 4) & 0x0F, signinfo.y_has_sign);
+
+  // Determine extra bits.
+  if (isVer2) {
+    ++signinfo.sign_info_bits;
+    if (bfirst & mask) {
+      ++bx;
+      ++by;
+    }
+  }
+}
+
+// extract bits per coordinate
+int CGarminPolygon::bits_per_coord(quint8 base, bool is_signed) {
+  int n = 2;
+
+  if (base <= 9) {
+    n += base;
+  } else {
+    n += (2 * base - 9);
+  }
+
+  if (is_signed) {
+    ++n;
+  }
+  return n;
+}
+
+class CMap : public QCoreApplication {
+ public:
+  explicit CMap(int& argc, char** argv);
+  virtual ~CMap();
+
+ private:
   typedef QVector<CGarminPolygon> polytype_t;
   typedef QVector<CGarminPoint> pointtype_t;
 
-  struct maplevel_t
-  {
-    bool inherited;
-    quint8 level;
-    quint8 bits;
-  };
-
-  // subfile part (TRE, RGN, ...) location information
-  struct subfile_part_t
-  {
-    quint32 offset = 0; // file offset of subfile part
-    quint32 size = 0;   // size of the subfile part
-  };
-
-  // subdivision  information
-  struct subdiv_desc_t
-  {
-    quint32 n;
-    quint16 next;             // section of next level
-    bool terminate;           // end of section group
-    quint32 rgn_start;        // offset into the subfile's RGN part
-    quint32 rgn_end;          // end of section in RGN part (last offset = rgn_end - 1)
-    bool hasPoints;           // there are points stored in the RGN subsection
-    bool hasPois;             // there are index points stored in the RGN subsection
-    bool hasPolylines;        // there are polylines stored in the RGN subsection
-    bool hasPolygons;         // there are polygons stored in the RGN subsection
-    qint32 iCenterLng;        // the center longitude of the area covered by this subdivision
-    qint32 iCenterLat;        // the center latitude  of the area covered by this subdivision
-    qreal north;              // north boundary of area covered by this subsection []
-    qreal east;               // east  boundary of area covered by this subsection []
-    qreal south;              // south boundary of area covered by this subsection []
-    qreal west;               // west  boundary of area covered by this subsection []
-    QRectF area;              // area in meter coordinates covered by this subdivision []
-    quint32 shift;            // number of left shifts for RGN data
-    quint32 level;            // map level this subdivision is shown
-    quint32 offsetPoints2;    //
-    qint32 lengthPoints2;     //
-    quint32 offsetPolylines2; //
-    qint32 lengthPolylines2;  //
-    quint32 offsetPolygons2;  //
-    qint32 lengthPolygons2;   //
-  };
-
-  struct subfile_desc_t
-  {
-    QString name;                        // the name of the subfile (not really needed)
-    QMap<QString, subfile_part_t> parts; // location information of all parts
-    qreal north = 0.0;                   // north boundary of area covered by this subfile [rad]
-    qreal east = 0.0;                    // east  boundary of area covered by this subfile [rad]
-    qreal south = 0.0;                   // south boundary of area covered by this subfile [rad]
-    qreal west = 0.0;                    // west  boundary of area covered by this subfile [rad]
-    QRectF area;                         // area in [] covered by this subfile
-    QVector<subdiv_desc_t> subdivs;      // list of subdivisions
-    QVector<maplevel_t> maplevels;       // used maplevels
-    bool isTransparent = false;          // bit 1 of POI_flags (TRE header @ 0x3F)
-    IGarminStrTbl *strtbl = nullptr;     // object to manage the string tables
-  };
-
 #pragma pack(1)
   // Garmin IMG file header structure, to the start of the FAT blocks
-  struct hdr_img_t
-  {
-    quint8 xorByte;             // 0x0000
-    quint8 b0x0001_0x000F[15];  //
-    char signature[7];          // 0x0010..0x0016
-    quint8 b0x0017_0x0040[42];  //
-    char identifier[7];         // 0x0041..0x0047
-    quint8 b0x0048;             //
-    char desc1[20];             // 0x0049..0x005C
-    quint8 b0x005D_0x0060[4];   //
-    quint8 e1;                  // 0x0061
-    quint8 e2;                  // 0x0062
-    quint8 b0x0063_0x0064[2];   //
-    char desc2[31];             // 0x0065..0x0083
-    quint8 b0x0084_0x040B[904]; //
-    quint32 dataoffset;         // 0x040C..0x040F
-    quint8 b0x0410_0x041F[16];  //
-    quint16 blocks[240];        // 0x0420..0x05FF
+  struct gmapsupp_imghdr_t {
+    quint8 xorByte = 0;                  // 0x0000
+    quint8 b0x0001_0x0007[7] = {0};      // 0x0001..0x0007
+    quint16 version = 0;                 // 0x0008
+    quint8 upMonth = 0;                  // 0x000A
+    quint8 upYear = 0;                   // 0x000B
+    quint8 b0x000C_0x000D[2] = {0};      // 0x000C..0x000D
+    quint8 supp = 0;                     // 0x000E
+    quint8 checksum = 0;                 // 0x000F
+    char signature[7] = {0};             // 0x0010..0x0016
+    quint8 b0x0017 = 0x2;                // 0x0017
+    quint16 sectors1 = 0;                // 0x0018..0x0019
+    quint16 heads1 = 0;                  // 0x001A..0x001B
+    quint16 cylinders = 0;               // 0x001C..0x001D
+    quint8 b0x001E_0x0038[27] = {0};     // 0x001E..0x0038
+    qint16 year = 0;                     // 0x0039..0x003A
+    qint8 month = 0;                     // 0x003B
+    qint8 day = 0;                       // 0x003C
+    qint8 hour = 0;                      // 0x003D
+    qint8 minute = 0;                    // 0x003E
+    qint8 second = 0;                    // 0x003F
+    qint8 offsetFAT = 0;                 // 0x0040
+    char identifier[7];                  // 0x0041..0x0047
+    quint8 b0x0048;                      // 0x0048
+    char desc1[20];                      // 0x0049..0x005C
+    quint16 head2 = 0;                   // 0x005D..0x005E
+    quint16 sectors2 = 0;                // 0x005F..0x0060
+    quint8 e1 = 0;                       // 0x0061
+    quint8 e2 = 0;                       // 0x0062
+    quint16 nBlocks1;                    // 0x0063..0x0064
+    char desc2[30];                      // 0x0065..0x0082
+    quint8 b0x0083_0x01BE[0x13C] = {0};  // 0x0083..0x01BE
+    quint8 startHead = 0;                // 0x01BF
+    quint8 startSector = 1;              // 0x01C0
+    quint8 startCylinder = 0;            // 0x01C1
+    quint8 systemType = 0;               // 0x01C2
+    quint8 endHead = 0;                  // 0x01C3
+    quint8 endSector = 0;                // 0x01C4
+    quint8 endCylinder = 0;              // 0x01C5
+    quint32 relSectors = 0;              // 0x01C6..0x01C9
+    quint32 nSectors = 0;                // 0x01CA..0x01CD
+    quint8 b0x01CE_0x01FD[0x30] = {0};   // 0001CE..0x01FD
+    quint16 terminator = 0xAA55;         // 0x01FE..0x01FF
     quint32 blocksize() { return 1 << (e1 + e2); }
+    void print();
   };
-  struct FATblock_t
-  {
-    quint8 flag;               // 0x0000
-    char name[8];              // 0x0001..0x0008
-    char type[3];              // 0x0009..0x000B
-    quint32 size;              // 0x000C..0x000F
-    quint16 part;              // 0x0010..0x0011
-    quint8 b0x0012_0x001F[14]; //
-    quint16 blocks[240];       // 0x0020..0x01FF
+
+  struct FATBlock_t {
+    quint8 flag;                // 0x0000
+    char name[8];               // 0x0001..0x0008
+    char type[3];               // 0x0009..0x000B
+    quint32 size;               // 0x000C..0x000F
+    quint16 part;               // 0x0010..0x0011
+    quint8 b0x0012_0x001F[14];  // 0x0012..0x001F
+    quint16 blocks[240];        // 0x0020..0x01FF
   };
 
   // common header of the RGN, TRE, LBL, NET, ... parts of the IMG file
-  struct hdr_subfile_part_t
-  {
-    quint16 length;           // 0x0000..0x0001
-    char type[10];            // 0x0002..0x000B
-    quint8 b0x000C;           //
-    quint8 flag;              // 0x000D
-    quint8 b0x000E_0x0014[7]; //
+  struct subfile_hdr_t {
+    quint16 size;    // 0x0000..0x0001
+    char type[10];   // 0x0002..0x000B
+    quint8 b0x000C;  // 0x000C
+    quint8 flag;     // 0x000D
+    qint16 year;     // 0x000E..0x000F
+    qint8 month;     // 0x0010
+    qint8 day;       // 0x0011
+    qint8 hour;      // 0x0012
+    qint8 minute;    // 0x0013
+    qint8 second;    // 0x0014
+    void print();
   };
 
-  // TRE part header
-  struct hdr_tre_t : public hdr_subfile_part_t
-  {
-    quint24 northbound;        // 0x0015..0x0017
-    quint24 eastbound;         // 0x0018..0x001A
-    quint24 southbound;        // 0x001B..0x001D
-    quint24 westbound;         // 0x001E..0x0020
-    quint32 tre1_offset;       // 0x0021..0x0024
-    quint32 tre1_size;         // 0x0025..0x0028
-    quint32 tre2_offset;       // 0x0029..0x002C
-    quint32 tre2_size;         // 0x002D..0x0030
-    quint32 tre3_offset;       // 0x0031..0x0034
-    quint32 tre3_size;         // 0x0035..0x0038
-    quint16 tre3_rec_size;     // 0x0039..0x003A
-    quint8 b0x003B_0x003E[4];  //
-    quint8 POI_flags;          // 0x003F
-    quint8 b0x0040_0x0049[10]; //
-    quint32 tre4_offset;       // 0x004A..0x004D
-    quint32 tre4_size;         // 0x004E..0x0051
-    quint16 tre4_rec_size;     // 0x0052..0x0053
-    quint8 b0x0054_0x0057[4];  //
-    quint32 tre5_offset;       // 0x0058..0x005B
-    quint32 tre5_size;         // 0x005C..0x005F
-    quint16 tre5_rec_size;     // 0x0060..0x0061
-    quint8 b0x0062_0x0065[4];  //
-    quint32 tre6_offset;       // 0x0066..0x0069
-    quint32 tre6_size;         // 0x006A..0x006D
-    quint16 tre6_rec_size;     // 0x006E..0x006F
-    quint8 b0x0070_0x0073[4];  //
-    quint8 b0x0074_0x007B[8];  //
-    quint32 tre7_offset;       // 0x007C..0x007F
-    quint32 tre7_size;         // 0x0080..0x0083
-    quint16 tre7_rec_size;     // 0x0084..0x0085
-    quint8 b0x0086_0x0089[4];  //
-    quint32 tre8_offset;       // 0x008A..0x008D
-    quint32 tre8_size;         // 0x008E..0x0091
-    quint16 tre8_rec_size;     // 0x0092..0x0093
-    quint16 polyl2_types_num;  // 0x0094..0x0095
-    quint16 polyg2_types_num;  // 0x0096..0x0097
-    quint16 poi2_types_num;    // 0x0098..0x0099
-    quint8 key[20];            // 0x009A..0x00AD
-    quint32 tre9_offset;       // 0x00AE..0x00B1
-    quint32 tre9_size;         // 0x00B2..0x00B5
-    quint16 tre9_rec_size;     // 0x00B6..0x00B7
+  struct gmp_hdr_t : public subfile_hdr_t {
+    quint8 b0x0015_0x0018[4];  // 0x0015..0x0018
+    quint32 offsetTRE;         // 0x0019..0x001C
+    quint32 offsetRGN;         // 0x001D..0x0020
+    quint32 offsetLBL;         // 0x0021..0x0024
+    quint32 offsetNET;         // 0x0025..0x0028
+    quint32 offsetNOD;         // 0x0029..0x002E
+    quint32 offsetDEM;         // 0x002D..0x0030
+    quint8 b0x0031_0x0034[4];  // 0x0031..0x0034
+    void print();
+    void print(quint32 offset);
   };
 
-  // RGN part header
-  struct hdr_rgn_t : public hdr_subfile_part_t
-  {
-    quint32 offset;            // 0x0015..0x0018
-    quint32 length;            // 0x0019..0x001C
-    quint32 offset_polyg2;     // 0x001D..0x0020
-    quint32 length_polyg2;     // 0x0021..0x0024
-    quint8 b0x0025_0x0038[20]; //
-    quint32 offset_polyl2;     // 0x0039..0x003C
-    quint32 length_polyl2;     // 0x003D..0x0040
-    quint8 b0x0041_0x0054[20]; //
-    quint32 offset_point2;     // 0x0055..0x0058
-    quint32 length_point2;     // 0x0059..0x005C
+  struct hdr_tre_t : public subfile_hdr_t {
+    quint24 northbound = {0};                        // 0x0015..0x0017 - max lat
+    quint24 eastbound = {0};                         // 0x0018..0x001A - max long
+    quint24 southbound = {0};                        // 0x001B..0x001D - min lat
+    quint24 westbound = {0};                         // 0x001E..0x0020 - min long, cant be +180
+    quint32 tre1_offset = 0;                         // 0x0021..0x0024 - map levels pos
+    quint32 tre1_size = 0;                           // 0x0025..0x0028
+    quint32 tre2_offset = 0;                         // 0x0029..0x002C - subdiv pos
+    quint32 tre2_size = 0;                           // 0x002D..0x0030
+    quint32 tre3_offset = 0;                         // 0x0031..0x0034 - not copyright, maybe two flags
+    quint32 tre3_size = 0;                           // 0x0035..0x0038
+    quint16 tre3_rec_size = 0;                       // 0x0039..0x003A
+    quint8 b0x003B_0x003E[4] = {0};                  // 0x003B..0x003E
+    quint8 POI_flags = 0;                            // 0x003F         - poi display flags
+    quint24 render_prio = {0x14, 0, 0};              // 0x0040..0x0042
+    quint8 b0x0043_0x0049[7] =                       // 0x0043..0x0049
+        {0x01, 0x03, 0x11, 0x00, 0x01, 0x00, 0x00};  // 0x0043..0x0049 - to be investigated
+    quint32 tre4_offset = 0;                         // 0x004A..0x004D - polyline
+    quint32 tre4_size = 0;                           // 0x004E..0x0051
+    quint16 tre4_rec_size = 0;                       // 0x0052..0x0053
+    quint8 b0x0054_0x0057[4] = {0};                  // 0x0054..0x0057
+    quint32 tre5_offset = 0;                         // 0x0058..0x005B - polygon
+    quint32 tre5_size = 0;                           // 0x005C..0x005F
+    quint16 tre5_rec_size = 0;                       // 0x0060..0x0061
+    quint8 b0x0062_0x0065[4] = {0};                  // 0x0062..0x0065
+    quint32 tre6_offset = 0;                         // 0x0066..0x0069 - points
+    quint32 tre6_size = 0;                           // 0x006A..0x006D
+    quint16 tre6_rec_size = 0;                       // 0x006E..0x006F
+    quint8 b0x0070_0x0073[4] = {0};                  // 0x0070..0x0073
+    quint32 map_id = 0;                              // 0x0074..0x0077
+    quint8 b0x0078_0x007B[4] = {0};                  // 0x0078..0x007B
+    quint32 tre7_offset = 0;                         // 0x007C..0x007F - object groups offset, ext type offsets V2
+    quint32 tre7_size = 0;                           // 0x0080..0x0083
+    quint16 tre7_rec_size = 0;                       // 0x0084..0x0085
+    quint8 b0x0086_0x0089[4] = {0};                  // 0x0086..0x0089 - 0x01 0x00 0x00 0x00
+    quint32 tre8_offset = 0;                         // 0x008A..0x008D - ext type overviews; order: pl, pg, poi; sorted
+                                                     // by type (1 type 1 levels 1 subtype)
+    quint32 tre8_size = 0;                           // 0x008E..0x0091
+    quint16 tre8_rec_size = 0;                       // 0x0092..0x0093
+    quint16 polyl2_types_num = 0;                    // 0x0094..0x0095 - num ext type ln
+    quint16 polyg2_types_num = 0;                    // 0x0096..0x0097 - num ext type pg
+    quint16 poi2_types_num = 0;                      // 0x0098..0x0099 - num ext type pt
+    quint8 key[16] = {0};                            // 0x009A..0x00A5 - map values
+    quint8 b0x00AA_0x00AD[4] = {0};                  // 0x00AA..0x00AD
+    quint32 tre9_offset;                             // 0x00AE..0x00B1
+    quint32 tre9_size;                               // 0x00B2..0x00B5
+    quint16 tre9_rec_size;                           // 0x00B6..0x00B7
+    quint8 b0x00B8_0x00BB[4] = {0};                  // 0x00B8..0x00BB
+    quint32 tre10_offset;                            // 0x00BC..0x00BF - not used?
+    quint32 tre10_size;                              // 0x00C0..0x00C3
+    quint16 tre10_rec_size;                          // 0x00C4..0x00C5
+    quint8 b0x00C6_0x00CE[9] = {0};                  // 0x00C6..0x00CE
+    quint32 map_number;                              // 0x00CF..0x00D2 - map number as hex
+    void print(quint32 offset);
   };
 
-  // LBL part header
-  struct hdr_lbl_t : public hdr_subfile_part_t
-  {
-    quint32 lbl1_offset;      // 0x0015..0x0018
-    quint32 lbl1_length;      // 0x0019..0x001C
-    quint8 addr_shift;        // 0x001D
-    quint8 coding;            // 0x001E
-    quint32 lbl2_offset;      // 0x001F..0x0022
-    quint32 lbl2_length;      // 0x0023..0x0026
-    quint16 lbl2_rec_size;    // 0x0027..0x0028
-    quint8 b0x0029_0x002C[4]; //
-    quint32 lbl3_offset;      // 0x002D..0x0030
-    quint32 lbl3_length;      // 0x0031..0x0034
-    quint16 lbl3_rec_size;    // 0x0035..0x0036
-    quint8 b0x0037_0x003A[4]; //
-    quint32 lbl4_offset;      // 0x003B..0x003E
-    quint32 lbl4_length;      // 0x003F..0x0042
-    quint16 lbl4_rec_size;    // 0x0043..0x0044
-    quint8 b0x0045_0x0048[4]; //
-    quint32 lbl5_offset;      // 0x0049..0x004C
-    quint32 lbl5_length;      // 0x004D..0x0050
-    quint16 lbl5_rec_size;    // 0x0051..0x0052
-    quint8 b0x0053_0x0056[4]; //
-    quint32 lbl6_offset;      // 0x0057..0x005A
-    quint32 lbl6_length;      // 0x005B..0x005E
-    quint8 lbl6_addr_shift;   // 0x005F
-    quint8 lbl6_glob_mask;    // 0x0060
-    quint8 b0x0061_0x0063[3]; //
-    quint32 lbl7_offset;      // 0x0064..0x0067
-    quint32 lbl7_length;      // 0x0068..0x006B
-    quint16 lbl7_rec_size;    // 0x006C..0x006D
-    quint8 b0x006E_0x0071[4]; //
-    quint32 lbl8_offset;      // 0x0072..0x0075
-    quint32 lbl8_length;      // 0x0076..0x0079
-    quint16 lbl8_rec_size;    // 0x007A..0x007B
-    quint8 b0x007C_0x007F[4]; //
-    quint32 lbl9_offset;      // 0x0080..0x0083
-    quint32 lbl9_length;      // 0x0084..0x0087
-    quint16 lbl9_rec_size;    // 0x0088..0x0089
-    quint8 b0x008A_0x008D[4]; //
-    quint32 lbl10_offset;     // 0x008E..0x0091
-    quint32 lbl10_length;     // 0x0092..0x0095
-    quint16 lbl10_rec_size;   // 0x0096..0x0097
-    quint8 b0x0098_0x009B[4]; //
-    quint32 lbl11_offset;     // 0x009C..0x009F
-    quint32 lbl11_length;     // 0x00A0..0x00A3
-    quint16 lbl11_rec_size;   // 0x00A4..0x00A5
-    quint8 b0x00A6_0x00A9[4]; //
-    quint16 codepage;         // 0x00AA..0x00AB
-    // 0x00EC: map created with cgpsmapper
-    // 0x0108: not for sale
-    // 0x0429: copyright ....
+  struct hdr_rgn_t : public subfile_hdr_t {
+    quint32 offset1 = 0;              // 0x0015..0x0018
+    quint32 length1 = 0;              // 0x0019..0x001C
+    quint32 offset_polyg2 = 0;        // 0x001D..0x0020
+    quint32 length_polyg2 = 0;        // 0x0021..0x0024
+    quint8 b0x0025_0x0038[20] = {0};  // 0x0025..0x0038
+    quint32 offset_polyl2 = 0;        // 0x0039..0x003C
+    quint32 length_polyl2 = 0;        // 0x003D..0x0040
+    quint8 b0x0041_0x0054[20] = {0};  // 0x0041..0x0054
+    quint32 offset_point2 = 0;        // 0x0055..0x0058
+    quint32 length_point2 = 0;        // 0x0059..0x005C
+    quint8 b0x005D_0x0070[20] = {0};  // 0x005D..0x0070
+    quint32 offset2 = 0;              // 0x0071..0x0074
+    quint32 length2 = 0;              // 0x0075..0x0078
+    quint32 unknown = 0;              // 0x0079..0x007C
+    void print(quint32 offset);
   };
 
-  // NET part header
-  struct hdr_net_t : public hdr_subfile_part_t
-  {
-    quint32 net1_offset;    // 0x0015..0x0018
-    quint32 net1_length;    // 0x0019..0x001C
-    quint8 net1_addr_shift; // 0x001D
-    quint32 net2_offset;    // 0x001E..0x0021
-    quint32 net2_length;    // 0x0022..0x0025
-    quint8 net2_addr_shift; // 0x0026
-    quint32 net3_offset;    // 0x0027..0x002A
-    quint32 net3_length;    // 0x002B..0x002E
+  struct hdr_lbl_t : public subfile_hdr_t {
+    quint32 lbl1_offset = 0;         // 0x0015..0x0018 - writer.put4(HEADER_LEN + sortDescriptionLength);
+    quint32 lbl1_length = 0;         // 0x0019..0x001C - label size
+    quint8 addr_shift = 0;           // 0x001D         - offset multiplier
+    quint8 coding = 0;               // 0x001E         - encoding type
+    quint32 lbl2_offset = 0;         // 0x001F..0x0022 - not used
+    quint32 lbl2_length = 0;         // 0x0023..0x0026
+    quint16 lbl2_rec_size = 0;       // 0x0027..0x0028
+    quint8 b0x0029_0x002C[4] = {0};  // 0x0029..0x002C
+    quint32 lbl3_offset = 0;         // 0x002D..0x0030 - not used
+    quint32 lbl3_length = 0;         // 0x0031..0x0034
+    quint16 lbl3_rec_size = 0;       // 0x0035..0x0036
+    quint8 b0x0037_0x003A[4] = {0};  // 0x0037..0x003A
+    quint32 lbl4_offset = 0;         // 0x003B..0x003E - not used
+    quint32 lbl4_length = 0;         // 0x003F..0x0042
+    quint16 lbl4_rec_size = 0;       // 0x0043..0x0044
+    quint8 b0x0045_0x0048[4] = {0};  // 0x0045..0x0048
+    quint32 lbl5_offset = 0;         // 0x0049..0x004C - not used
+    quint32 lbl5_length = 0;         // 0x004D..0x0050
+    quint16 lbl5_rec_size = 0;       // 0x0051..0x0052
+    quint8 b0x0053_0x0056[4] = {0};  // 0x0053..0x0056
+    quint32 lbl6_offset = 0;         // 0x0057..0x005A - not used
+    quint32 lbl6_length = 0;         // 0x005B..0x005E
+    quint8 lbl6_addr_shift = 0;      // 0x005F
+    quint8 lbl6_glob_mask = 0;       // 0x0060
+    quint8 b0x0061_0x0063[3] = {0};  // 0x0061..0x0063
+    quint32 lbl7_offset = 0;         // 0x0064..0x0067 - not used
+    quint32 lbl7_length = 0;         // 0x0068..0x006B
+    quint16 lbl7_rec_size = 0;       // 0x006C..0x006D
+    quint8 b0x006E_0x0071[4] = {0};  // 0x006E..0x0071
+    quint32 lbl8_offset = 0;         // 0x0072..0x0075 - not used
+    quint32 lbl8_length = 0;         // 0x0076..0x0079
+    quint16 lbl8_rec_size = 0;       // 0x007A..0x007B
+    quint8 b0x007C_0x007F[4] = {0};  // 0x007C..0x007F
+    quint32 lbl9_offset = 0;         // 0x0080..0x0083 - not used
+    quint32 lbl9_length = 0;         // 0x0084..0x0087
+    quint16 lbl9_rec_size = 0;       // 0x0088..0x0089
+    quint8 b0x008A_0x008D[4] = {0};  // 0x008A..0x008D
+    quint32 lbl10_offset = 0;        // 0x008E..0x0091 - not used
+    quint32 lbl10_length = 0;        // 0x0092..0x0095
+    quint16 lbl10_rec_size = 0;      // 0x0096..0x0097
+    quint8 b0x0098_0x009B[4] = {0};  // 0x0098..0x009B
+    quint32 lbl11_offset = 0;        // 0x009C..0x009F - not used
+    quint32 lbl11_length = 0;        // 0x00A0..0x00A3
+    quint16 lbl11_rec_size = 0;      // 0x00A4..0x00A5
+    quint8 b0x00A6_0x00A9[4] = {0};  // 0x00A6..0x00A9
+    quint16 codepage = 0;            // 0x00AA..0x00AB - optional check length
+    quint8 b0x00AC_0x00AF[4] = {0};  // 0x00AC..0x00AF - 0x07 0x00 0x02 0x80 or 0x12 0x00 0x01 0x80
+    void print(quint32 offset);
   };
 
-#define TRE_MAP_LEVEL(r) ((r)->zoom & 0x0f)
-#define TRE_MAP_INHER(r) (((r)->zoom & 0x80) != 0)
+  struct hdr_net_t : public subfile_hdr_t {
+    quint32 net1_offset;     // 0x0015..0x0018
+    quint32 net1_length;     // 0x0019..0x001C
+    quint8 net1_addr_shift;  // 0x001D
+    quint32 net2_offset;     // 0x001E..0x0021
+    quint32 net2_length;     // 0x0022..0x0025
+    quint8 net2_addr_shift;  // 0x0026
+    quint32 net3_offset;     // 0x0027..0x002A
+    quint32 net3_length;     // 0x002B..0x002E
+    hdr_net_t() { memset(this, 0, sizeof(hdr_net_t)); }
+  };
+
+  struct hdr_nod_t : public subfile_hdr_t {
+    hdr_nod_t() { memset(this, 0, sizeof(hdr_nod_t)); }
+  };
+
+  struct hdr_dem_t : public subfile_hdr_t {
+    quint32 flags;             // 0x0015..0x0018
+    quint16 zoomLevels;        // 0x0019..0x001A
+    quint8 b0x001B_0x001D[4];  // 0x001B..0x001D
+    quint16 rec_size;          // 0x001F..0x0020
+    quint32 offset_block3;     // 0x0021..0x0024
+    quint8 b0x0025_0x0029[4];  // 0x0025..0x0029
+    hdr_dem_t() { memset(this, 0, sizeof(hdr_dem_t)); }
+    void print(quint32 offset);
+  };
+
+  // the real copyright header
+  struct tre_0_t {
+    QString descr1;
+    QString descr2;
+  };
 
   // map level definition
-  struct tre_map_level_t
-  {
+  struct tre_1_t {
     quint8 zoom;
     quint8 bits;
-    quint16 nsubdiv;
+    quint16 subdiv;
+    void print() { printf("zoom: %02X bits: %i subdiv: %i\n", zoom, bits, subdiv); }
   };
 
   // map subdivision definition, without pointer to the lower level subparts
-  struct tre_subdiv_t
-  {
+  struct tre_2_t {
     quint24 rgn_offset;
     quint8 elements;
     quint24 center_lng;
@@ -1532,13 +1339,11 @@ private:
   };
 
   // pointer to the lower level subparts
-  struct tre_subdiv_next_t : public tre_subdiv_t
-  {
+  struct tre_2_next_t : public tre_2_t {
     quint16 next;
   };
 
-  struct tre_subdiv2_t
-  {
+  struct tre_7_t {
     quint32 offsetPolygons;
     quint32 offsetPolyline;
     quint32 offsetPoints;
@@ -1546,55 +1351,119 @@ private:
   };
 
 #pragma pack()
-  struct map_level_t
-  {
-    quint8 bits;
-    quint8 level;
-    bool useBaseMap;
+  // struct maplevel_t
+  // {
+  //   quint8 level;
+  //   quint8 bits;
+  //   bool useBaseMap;
 
-    bool operator==(const map_level_t &ml) const
-    {
-      if (ml.bits != bits || ml.level != level || ml.useBaseMap != useBaseMap)
-      {
+  //   bool operator==(const maplevel_t &ml) const
+  //   {
+  //     if (ml.bits != bits || ml.level != level || ml.useBaseMap != useBaseMap)
+  //     {
+  //       return false;
+  //     }
+  //     else
+  //     {
+  //       return true;
+  //     }
+  //   }
+
+  //   static bool GreaterThan(const maplevel_t &ml1, const maplevel_t &ml2) { return ml1.bits <
+  //   ml2.bits; }
+  // };
+
+  struct maplevel_t {
+    bool inherit;
+    quint8 level;
+    quint8 bits;
+    bool operator==(const maplevel_t& ml) const {
+      if (ml.bits != bits || ml.level != level || ml.inherit != inherit) {
         return false;
-      }
-      else
-      {
+      } else {
         return true;
       }
     }
-
-    static bool GreaterThan(const map_level_t &ml1, const map_level_t &ml2) { return ml1.bits < ml2.bits; }
   };
 
-  enum exce_e
-  {
-    eErrOpen,
-    eErrAccess,
-    errFormat,
-    errLock,
-    errAbort
+  // subdivision  information
+  struct subdiv_t {
+    quint32 n;
+    quint16 next;       // section of next level
+    bool terminate;     // end of section group
+    quint32 rgn_start;  // offset into the subfile's RGN part
+    quint32 rgn_end;    // end of section in RGN part (last offset = rgn_end - 1)
+    bool hasPoints;     // there are points stored in the RGN subsection
+    bool hasPois;       // there are indexed points stored in the RGN subsection
+    bool hasPolylines;  // there are polylines stored in the RGN subsection
+    bool hasPolygons;   // there are polygons stored in the RGN subsection
+    qint32 iCenterLng;  // the center longitude of the area covered by this subdivision
+    qint32 iCenterLat;  // the center latitude  of the area covered by this subdivision
+    double north;       // north boundary of area covered by this subsection []
+    double east;        // east  boundary of area covered by this subsection []
+    double south;       // south boundary of area covered by this subsection []
+    double west;        // west  boundary of area covered by this subsection []
+    QRectF area;        // area in meter coordinates covered by this subdivision []
+    quint32 shift;      // number of left shifts for RGN data
+    quint32 level;      // map level this subdivision is shown
+    quint32 offsetPoints2;
+    qint32 lengthPoints2;
+    quint32 offsetPolylines2;
+    qint32 lengthPolylines2;
+    quint32 offsetPolygons2;
+    qint32 lengthPolygons2;
+    subdiv_t() { memset(this, 0, sizeof(subdiv_t)); }
+    void print() const;
+    void printLite() const;
   };
 
-  struct exce_t
-  {
-    exce_t(exce_e err, const QString &msg) : err(err), msg(msg) {}
-    exce_e err;
-    QString msg;
+  // subfile part (TRE, RGN, ...) location information
+  struct subfile_part_t {
+    quint32 offset = 0;  // file offset of subfile part
+    quint32 size = 0;    // size of the subfile part
+    // quint32 headerSize;
+    // subfile_part_t() : offset(0), size(0), headerSize(0) {}
+    subfile_part_t() : offset(0), size(0) {}
   };
 
-  QString copyright; // a copyright string to be displayed as tool tip
+  struct subfile_t {
+    QString name;                         // the name of the subfile (not really needed)
+    QMap<QString, subfile_part_t> parts;  // location information of all parts
+    qreal north = 0.0;                    // north boundary of area covered by this subfile [rad]
+    qreal east = 0.0;                     // east  boundary of area covered by this subfile [rad]
+    qreal south = 0.0;                    // south boundary of area covered by this subfile [rad]
+    qreal west = 0.0;                     // west  boundary of area covered by this subfile [rad]
+    QRectF area;                          // area in [] covered by this subfile
+    QVector<subdiv_t> subdivs;            // list of subdivisions
+    QVector<maplevel_t> maplevels;        // used maplevels
+    bool isTransparent = false;           // bit 1 of POI_flags (TRE header @ 0x3F)
+    IGarminStrTbl* strtbl = nullptr;      // object to manage the string tables
+  };
+
+#define TRE_MAP_LEVEL(r) ((r)->zoom & 0x0f)
+#define TRE_MAP_INHER(r) (((r)->zoom & 0x80) != 0)
+
+  QString copyright;  // a copyright string to be displayed as tool tip
   QString inputFile = "";
   QString outputFile = "";
   QFile of;
-  QTextCodec *codec = nullptr;
+  QTextCodec* codec = nullptr;
   quint8 mask;
   quint32 mask32;
   quint64 mask64;
-  QString mapdesc;
-  QMap<QString, subfile_desc_t> subfiles; // hold all subfile descriptors: In a normal *.img file there is only one subfile. However gmapsupp.img files can hold several subfiles each with it's own subfile parts.
   QRectF maparea;
-  QVector<map_level_t> maplevels; // combined maplevels of all tiles
+  QString codepageStr = "";
+  QString codingStr = "";
+  QString nameStr;
+  QString copyrightsStr = "";
+  QString mapdesc;
+
+  QMutex mutex;
+  QMap<QString, subfile_t> subfiles;           // hold all subfile descriptors: In a normal *.img file there
+                                               // is only one subfile. However gmapsupp.img files can hold
+                                               // several subfiles each with it's own subfile parts.
+  QMap<QString, subfile_part_t> subfileParts;  // helper map for fast offset lookup, dupe with some sf parts
+  QVector<maplevel_t> maplevels;               // combined maplevels of all tiles
   polytype_t polygons;
   polytype_t polylines;
   pointtype_t points;
@@ -1602,14 +1471,6 @@ private:
   QSet<QString> copyrights;
   QString mCodePage = "";
   QString mCoding = "";
-  QStringList slPoints = QStringList();
-  QStringList slPois = QStringList();
-  QStringList slPolylines = QStringList();
-  QStringList slPolygons = QStringList();
-  QStringList slPoints2 = QStringList();
-  QStringList slPois2 = QStringList();
-  QStringList slPolylines2 = QStringList();
-  QStringList slPolygons2 = QStringList();
   int tatalPt = 0;
   int tatalLn = 0;
   int tatalPg = 0;
@@ -1619,1310 +1480,1527 @@ private:
   int tatalPtFailed = 0;
   int tatalLnFailed = 0;
   int tatalPgFailed = 0;
+  QStringList slPoints = QStringList();
+  QStringList slPois = QStringList();
+  QStringList slPolylines = QStringList();
+  QStringList slPolygons = QStringList();
+  QStringList slPoints2 = QStringList();
+  QStringList slPois2 = QStringList();
+  QStringList slPolylines2 = QStringList();
+  QStringList slPolygons2 = QStringList();
 
-  QString roundToDigits(double value, int precision, int cut)
-  {
-    QString temp = QString::number(value, 'f', precision);
-    int decimalPoint = temp.indexOf('.');
-    if (decimalPoint != -1 && temp.length() > decimalPoint + cut + 1)
-    {
-      return temp.left(decimalPoint + cut + 1);
+  void print(const char* format, ...);
+  void readFAT(QFile& file);
+  QString roundToDigits(double value, int precision, int cut);
+  QString convPtDegStr(const QPointF& point, quint32 level = -1);
+  QString convLnDegStr(const QPolygonF& polyline, quint32 level, quint32 len, bool isLine);
+  void decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata, polytype_t& polylines, polytype_t& polygons, pointtype_t& points,
+                 pointtype_t& pois);
+  void readSubfiles(QFile& file);
+  void readSubfileBasics(subfile_t& subfile, QFile& file);
+  void printHeader();
+  // void readFile(QFile& file, quint32 offset, quint32 size, QByteArray& data);
+};
+
+CMap::CMap(int& argc, char** argv) : QCoreApplication(argc, argv) {
+  QCommandLineParser parser;
+  parser.setApplicationDescription("qgimp 1.0");
+  parser.addHelpOption();
+
+  QCommandLineOption inputOption(QStringList() << "i" << "input", ".img input file", "input_file.img");
+  QCommandLineOption outputOption(QStringList() << "o" << "output", ".mp output file", "output_file.mp");
+  parser.addOption(inputOption);
+  parser.addOption(outputOption);
+  parser.process(this->arguments());
+
+  if (!parser.isSet(inputOption)) {
+    qCritical() << "Option -i is required!";
+    parser.showHelp(1);
+  } else {
+    inputFile = parser.value("input");
+    QFileInfo inputFileInfo(inputFile);
+
+    if (!inputFileInfo.exists()) {
+      qCritical() << "Error: Input file does not exist:" << inputFile;
+      exit(1);
     }
-    return temp;
+
+    if (!inputFileInfo.isReadable()) {
+      qCritical() << "Error: No permissions to read the file:" << inputFile;
+      exit(1);
+    }
   }
 
-  QString convPtDegStr(const QPointF &point, quint32 level = -1)
-  {
-    const double y = qRadiansToDegrees(point.y());
-    const double x = qRadiansToDegrees(point.x());
-    //     if (y < 41.0 || x < 21.0)
-    //     {
-    // #ifdef DEBUG_WRITE_TO_OUTPUT
-    //       return QString("; Possibly bitstream error (y < 41.0 || x < 21.0) x:%1 y:%2").arg(x).arg(y);
-    // #else
-    //       return "";
-    // #endif
-    //     }
-    //     if (y > 45.0 || x > 27.0)
-    //     {
-    // #ifdef DEBUG_WRITE_TO_OUTPUT
-    //       return QString("; Possibly bitstream error (y > 45.0 || x > 27.0) x:%1 y:%2").arg(x).arg(y);
-    // #else
-    //       return "";
-    // #endif
-    //     }
+  if (!parser.isSet(outputOption)) {
+    qCritical() << "Option -o is required!";
+    parser.showHelp(1);
+  } else {
+    outputFile = parser.value("output");
+    QFileInfo outputFileInfo(outputFile);
 
-    // return QString("%1(%2,%3)").arg(level == -1 ? "" : QString("Data%1=").arg(level)).arg(roundToDigits(y, 5, 3)).arg(roundToDigits(x, 5, 3));
-    // return QString("%1(%2,%3)").arg(level == -1 ? "" : QString("Data%1=").arg(level)).arg(roundToDigits(y, 5, 4)).arg(roundToDigits(x, 5, 4));
-    return QString("%1(%2,%3)").arg(level == -1 ? "" : QString("Data%1=").arg(level)).arg(y, 0, 'f', 5).arg(x, 0, 'f', 5);
+    if (outputFileInfo.exists()) {
+      QDateTime lastModified = outputFileInfo.lastModified();
+      QString timestamp = lastModified.toString("_yyyyMMdd_hhmmss");
+      QString baseName = outputFileInfo.completeBaseName();
+      QString suffix = outputFileInfo.suffix();
+      QString dir = outputFileInfo.path();
+
+      QString renamedFile = dir + "/" + baseName + timestamp + "." + suffix;
+
+      QFile::rename(outputFile, renamedFile);
+      qWarning() << "The existing file was renamed to:" << renamedFile;
+    }
   }
 
-  QString convLnDegStr(const QPolygonF &polyline, quint32 level, quint32 len, bool isLine)
-  {
-    QStringList errorSl;
-    QStringList resultSl;
+  of.setFileName(outputFile);
+  if (!of.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    qCritical() << "Error opening output file:" << of.errorString();
+    exit(1);
+  }
 
-    QPointF pointFirst;
-    QPointF pointPrev;
+  codec = QTextCodec::codecForName("Windows-1251");
+  if (!codec) {
+    qWarning("CP1251 codec not available");
+  }
+  // of.setBufferSize(16 * 1024);
 
-    for (const QPointF &point : polyline)
-    {
-      if (pointFirst.isNull())
-      {
-        pointFirst = point;
-      }
-      else if (pointPrev == point)
-      {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-        qDebug() << "; Skipping next dupe point";
-        errorSl << "; Skipping next dupe point";
-#endif
+  QFile file(inputFile);
+  if (!file.open(QIODevice::ReadOnly)) {
+    throw CException("failed to open file: " + inputFile);
+  }
+
+  try {
+    // readFAT(file);
+    readSubfiles(file);
+    printHeader();
+
+    // int times = 0;
+    for (const subfile_t& subfile : std::as_const(subfiles)) {
+      file.seek(subfile.parts["RGN"].offset);
+      QByteArray rgndata = file.read(subfile.parts["RGN"].size);
+      if (rgndata.length() == 0) {
         continue;
       }
-      pointPrev = point;
 
-      const QString output = convPtDegStr(point);
-      if (output.startsWith(";"))
-      {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-        errorSl << output;
-#endif
+      const QVector<subdiv_t>& subdivs = subfile.subdivs;
+      for (const subdiv_t& subdiv : subdivs) {
+        // if (subdiv.level != level)
+        // {
+        //   // qDebug() << "Level does not exists (skip):" << level << subdiv.level;
+        //   continue;
+        // }
+        // ++times;
+
+        // if (times > 3)
+        // {
+        //   break;
+        // }
+
+        // qDebug() << "decodeRgn() times:" << times;
+        decodeRgn(file, subdiv, subfile.strtbl, rgndata, polylines, polygons, points, pois);
       }
-      else
-      {
-        resultSl << output;
-      }
     }
 
-    int size = resultSl.size();
-    if (size > 1 && resultSl.first() == resultSl.last())
-    {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      // maybe a bug or is by design
-      qDebug() << "; Skipping last dupe point";
-      errorSl << "; Skipping last dupe point";
-#endif
-      resultSl.removeLast();
-      --size;
-    }
-
-    // todo: da proverq za brojkite e tipa tuk!
-    if (isLine == true && size < 2)
-    {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      return "; Does not make much sense: polyline with less then minimum points";
-#else
-      return "";
-#endif
-    }
-    else if (isLine == false && size < 3) // maybe 4?
-    {
-      // a polygon with 3 points (with automatic closure) does not make much sense either
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      return "; Does not make much sense: polygon with less then minimum points";
-#else
-      return "";
-#endif
-    }
-
-    return QString("%1%2Data%3=%4").arg(errorSl.join('\n')).arg(errorSl.size() ? "\n" : "").arg(level).arg(resultSl.join(','));
+    of.write(codec->fromUnicode(slPoints.join("\n")) + "\n");
+    of.write(codec->fromUnicode(slPois.join("\n")) + "\n");
+    of.write(codec->fromUnicode(slPolylines.join("\n")) + "\n");
+    of.write(codec->fromUnicode(slPolygons.join("\n")) + "\n");
+    of.write(codec->fromUnicode(slPoints2.join("\n")) + "\n");
+    of.write(codec->fromUnicode(slPois2.join("\n")) + "\n");
+    of.write(codec->fromUnicode(slPolylines2.join("\n")) + "\n");
+    of.write(codec->fromUnicode(slPolygons2.join("\n")) + "\n");
+    of.flush();
+  } catch (const CException& e) {
+    qDebug() << "Fatal error:" << e.msg;
   }
 
-  static inline bool isCompletelyOutside(const QPolygonF &poly, const QRectF &viewport)
-  {
-    qreal north = qDegreesToRadians(-90.0);
-    qreal south = qDegreesToRadians(90.0);
-    qreal west = qDegreesToRadians(180.0);
-    qreal east = qDegreesToRadians(-180.0);
+  file.close();
+}
 
-    for (const QPointF &pt : poly)
-    {
-      if (north < pt.y())
-      {
-        north = pt.y();
-      }
-      if (south > pt.y())
-      {
-        south = pt.y();
-      }
-      if (west > pt.x())
-      {
-        west = pt.x();
-      }
-      if (east < pt.x())
-      {
-        east = pt.x();
-      }
-    }
+CMap::~CMap() {
+  if (of.isOpen()) {
+    of.flush();
+    of.close();
+  }
+  qDebug() << "✅ Done.";
+}
 
-    QRectF ref(west, north, east - west, south - north);
-    if (ref.width() == 0)
-    {
-      ref.setWidth(0.00001);
-    }
-    if (ref.height() == 0)
-    {
-      ref.setHeight(0.00001);
-    }
+void CMap::gmapsupp_imghdr_t::print() {
+  printUInt8("xorByte", xorByte);
+  printArrayUInt8("b0x0001_0x0007", b0x0001_0x0007, sizeof(b0x0001_0x0007));
+  printUInt16("version", version);
+  printInt8("upMonth", upMonth);
+  printInt16("upYear", upYear + 1900);
+  printArrayUInt8("b0x000C_0x000D", b0x000C_0x000D, sizeof(b0x000C_0x000D));
+  printUInt8("supp", supp);
+  printUInt8("checksum", checksum);
+  printArrayInt8("signature", signature, sizeof(signature));
+  printUInt8("b0x0017", b0x0017);
+  printUInt16("sectors1", sectors1);
+  printUInt16("heads1", heads1);
+  printUInt16("cylinders", cylinders);
+  printArrayUInt8("b0x001E_0x00038", b0x001E_0x0038, sizeof(b0x001E_0x0038));
+  printInt16("year", year);
+  printInt8("month", month);
+  printInt8("day", day);
+  printInt8("hour", hour);
+  printInt8("minute", minute);
+  printInt8("second", second);
+  printInt8("offsetFAT", offsetFAT);
+  printArrayInt8("identifier", identifier, sizeof(identifier));
+  printUInt8("b0x0048", b0x0048);
+  printArrayInt8("desc1", desc1, sizeof(desc1));
+  printUInt16("head2", head2);
+  printUInt16("sectors2", sectors2);
+  printUInt8("e1", e1);
+  printUInt8("e2", e2);
+  printUInt16("nBlocks1", nBlocks1);
+  printArrayInt8("desc2", desc2, sizeof(desc2));
+  printArrayUInt8("b0x0083_0x01BE", b0x0083_0x01BE, sizeof(b0x0083_0x01BE));
+  printUInt8("startHead", startHead);
+  printUInt8("startSector", startSector);
+  printUInt8("startCylinder", startCylinder);
+  printUInt8("systemType", systemType);
+  printUInt8("endHead", endHead);
+  printUInt8("endSector", endSector);
+  printUInt8("endCylinder", endCylinder);
+  printUInt32("relSectors", relSectors);
+  printUInt32("nSectors", nSectors);
+  printArrayUInt8("b0x01CE_0x01FD", b0x01CE_0x01FD, sizeof(b0x01CE_0x01FD));
+  printUInt16("terminator", terminator);
+  // printArrayUInt8("b0x0200_0x0FFF", b0x0200_0x0FFF, sizeof(b0x0200_0x0FFF));
+}
 
-    return !viewport.intersects(ref);
+void CMap::subfile_hdr_t::print() {
+  printUInt16("size", size);
+  printArrayInt8("type", type, sizeof(type));
+  printUInt8("b0x000C", b0x000C);
+  printUInt8("flag", flag);
+  printInt16("year", year);
+  printInt8("month", month);
+  printInt8("day", day);
+  printInt8("hour", hour);
+  printInt8("minute", minute);
+  printInt8("second", second);
+}
+
+void CMap::gmp_hdr_t::print() {
+  subfile_hdr_t::print();
+  printArrayUInt8("b0x0015_0x0018", b0x0015_0x0018, sizeof(b0x0015_0x0018));
+  printUInt32("offsetTRE", offsetTRE);
+  printUInt32("offsetRGN", offsetRGN);
+  printUInt32("offsetLBL", offsetLBL);
+  printUInt32("offsetNET", offsetNET);
+  printUInt32("offsetNOD", offsetNOD);
+  printUInt32("offsetDEM", offsetDEM);
+  printArrayUInt8("b0x0031_0x0034", b0x0031_0x0034, sizeof(b0x0031_0x0034));
+}
+
+void CMap::hdr_tre_t::print(quint32 offset) {
+  subfile_hdr_t::print();
+
+  printUInt24("northbound", northbound);
+  printUInt24("eastbound", eastbound);
+  printUInt24("southbound", southbound);
+  printUInt24("westbound", westbound);
+  printUInt32("tre1_offset", tre1_offset + offset);
+  printUInt32("tre1_size", tre1_size);
+  printUInt32("tre2_offset", tre2_offset + offset);
+  printUInt32("tre2_size", tre2_size);
+  printUInt32("tre3_offset", tre3_offset + offset);
+  printUInt32("tre3_size", tre3_size);
+  printUInt16("tre3_rec_size", tre3_rec_size);
+  printArrayUInt8("b0x003B_0x003E", b0x003B_0x003E, sizeof(b0x003B_0x003E));
+  printUInt8("POI_flags", POI_flags);
+  printArrayUInt8("render_prio", render_prio, sizeof(render_prio));
+  printArrayUInt8("b0x0043_0x0049", b0x0043_0x0049, sizeof(b0x0043_0x0049));
+  printUInt32("tre4_offset", tre4_offset + offset);
+  printUInt32("tre4_size", tre4_size);
+  printUInt16("tre4_rec_size", tre4_rec_size);
+  printArrayUInt8("b0x0054_0x0057", b0x0054_0x0057, sizeof(b0x0054_0x0057));
+  printUInt32("tre5_offset", tre5_offset + offset);
+  printUInt32("tre5_size", tre5_size);
+  printUInt16("tre5_rec_size", tre5_rec_size);
+  printArrayUInt8("b0x0062_0x0065", b0x0062_0x0065, sizeof(b0x0062_0x0065));
+  printUInt32("tre6_offset", tre6_offset + offset);
+  printUInt32("tre6_size", tre6_size);
+  printUInt16("tre6_rec_size", tre6_rec_size);
+  printArrayUInt8("b0x0070_0x0073", b0x0070_0x0073, sizeof(b0x0070_0x0073));
+  printUInt32("map_id", map_id);
+  printArrayUInt8("b0x0078_0x007B", b0x0078_0x007B, sizeof(b0x0078_0x007B));
+  printUInt32("tre7_offset", tre7_offset + offset);
+  printUInt32("tre7_size", tre7_size);
+  printUInt16("tre7_rec_size", tre7_rec_size);
+  printArrayUInt8("b0x0086_0x0089", b0x0086_0x0089, sizeof(b0x0086_0x0089));
+  printUInt32("tre8_offset", tre8_offset + offset);
+  printUInt32("tre8_size", tre8_size);
+  printUInt16("tre8_rec_size", tre8_rec_size);
+  printUInt16("polyl2_types_num", polyl2_types_num);
+  printUInt16("polyg2_types_num", polyg2_types_num);
+  printUInt16("poi2_types_num", poi2_types_num);
+  printArrayUInt8("key", key, sizeof(key));
+  printArrayUInt8("b0x00AA_0x00AD", b0x00AA_0x00AD, sizeof(b0x00AA_0x00AD));
+  printUInt32("tre9_offset", tre9_offset + offset);
+  printUInt32("tre9_size", tre9_size);
+  printUInt16("tre9_rec_size", tre9_rec_size);
+  printArrayUInt8("b0x00B8_0x00BB", b0x00B8_0x00BB, sizeof(b0x00B8_0x00BB));
+  printUInt32("tre10_offset", tre9_offset + offset);
+  printUInt32("tre10_size", tre9_size);
+  printUInt16("tre10_rec_size", tre9_rec_size);
+  printArrayUInt8("b0x00C6_0x00CE", b0x00C6_0x00CE, sizeof(b0x00C6_0x00CE));
+  printUInt32("map_number", map_number);
+}
+
+void CMap::hdr_rgn_t::print(quint32 offset) {
+  subfile_hdr_t::print();
+
+  printUInt32("offset1", offset1 + offset);
+  printUInt32("length1", length1);
+  printUInt32("offset_polyg2", offset_polyg2 + offset);
+  printUInt32("length_polyg2", length_polyg2);
+  printArrayUInt8("b0x0025_0x0038", b0x0025_0x0038, sizeof(b0x0025_0x0038));
+  printUInt32("offset_polyl2", offset_polyl2 + offset);
+  printUInt32("length_polyl2", length_polyl2);
+  printArrayUInt8("b0x0041_0x0054", b0x0041_0x0054, sizeof(b0x0041_0x0054));
+  printUInt32("offset_point2", offset_point2 + offset);
+  printUInt32("length_point2", length_point2);
+  printArrayUInt8("b0x005D_0x0070", b0x005D_0x0070, sizeof(b0x005D_0x0070));
+  printUInt32("offset2", offset2 + offset);
+  printUInt32("length2", length2);
+  printUInt32("unknown", unknown);
+}
+
+void CMap::hdr_lbl_t::print(quint32 offset) {
+  subfile_hdr_t::print();
+
+  printUInt32("lbl1_offset", lbl1_offset + offset);
+  printUInt32("lbl1_length", lbl1_length);
+  printUInt8("addr_shift", addr_shift);
+  printUInt8("coding", coding);
+
+  printUInt32("lbl2_offset", lbl2_offset + offset);
+  printUInt32("lbl2_length", lbl2_length);
+  printUInt16("lbl2_rec_size", lbl2_rec_size);
+  printArrayUInt8("b0x0029_0x002C", b0x0029_0x002C, sizeof(b0x0029_0x002C));
+
+  printUInt32("lbl3_offset", lbl3_offset + offset);
+  printUInt32("lbl3_length", lbl3_length);
+  printUInt16("lbl3_rec_size", lbl3_rec_size);
+  printArrayUInt8("b0x0037_0x003A", b0x0037_0x003A, sizeof(b0x0037_0x003A));
+
+  printUInt32("lbl4_offset", lbl4_offset + offset);
+  printUInt32("lbl4_length", lbl4_length);
+  printUInt16("lbl4_rec_size", lbl4_rec_size);
+  printArrayUInt8("b0x0045_0x0048", b0x0045_0x0048, sizeof(b0x0045_0x0048));
+
+  printUInt32("lbl5_offset", lbl5_offset + offset);
+  printUInt32("lbl5_length", lbl5_length);
+  printUInt16("lbl5_rec_size", lbl5_rec_size);
+  printArrayUInt8("b0x0053_0x0056", b0x0053_0x0056, sizeof(b0x0053_0x0056));
+
+  printUInt32("lbl6_offset", lbl6_offset + offset);
+  printUInt32("lbl6_length", lbl6_length);
+  printUInt8("lbl6_addr_shift", lbl6_addr_shift);
+  printUInt8("lbl6_glob_mask", lbl6_glob_mask);
+  printArrayUInt8("b0x0061_0x0063", b0x0061_0x0063, sizeof(b0x0061_0x0063));
+
+  printUInt32("lbl7_offset", lbl7_offset + offset);
+  printUInt32("lbl7_length", lbl7_length);
+  printUInt16("lbl7_rec_size", lbl7_rec_size);
+  printArrayUInt8("b0x006E_0x0071", b0x006E_0x0071, sizeof(b0x006E_0x0071));
+
+  printUInt32("lbl8_offset", lbl8_offset + offset);
+  printUInt32("lbl8_length", lbl8_length);
+  printUInt16("lbl8_rec_size", lbl8_rec_size);
+  printArrayUInt8("b0x007C_0x007F", b0x007C_0x007F, sizeof(b0x007C_0x007F));
+
+  printUInt32("lbl9_offset", lbl9_offset + offset);
+  printUInt32("lbl9_length", lbl9_length);
+  printUInt16("lbl9_rec_size", lbl9_rec_size);
+  printArrayUInt8("b0x008A_0x008D", b0x008A_0x008D, sizeof(b0x008A_0x008D));
+
+  printUInt32("lbl10_offset", lbl10_offset + offset);
+  printUInt32("lbl10_length", lbl10_length);
+  printUInt16("lbl10_rec_size", lbl10_rec_size);
+  printArrayUInt8("b0x0098_0x009B", b0x0098_0x009B, sizeof(b0x0098_0x009B));
+
+  printUInt32("lbl11_offset", lbl11_offset + offset);
+  printUInt32("lbl11_length", lbl11_length);
+  printUInt16("lbl11_rec_size", lbl11_rec_size);
+  printArrayUInt8("b0x00A6_0x00A9", b0x00A6_0x00A9, sizeof(b0x00A6_0x00A9));
+
+  printUInt16("codepage", codepage);
+
+  printArrayUInt8("b0x00AC_0x00AF", b0x00AC_0x00AF, sizeof(b0x00AC_0x00AF));
+}
+
+void CMap::hdr_dem_t::print(quint32 offset) {
+  subfile_hdr_t::print();
+
+  printUInt32("flags", flags);
+  printUInt16("zoomLevels", zoomLevels);
+  printArrayUInt8("b0x001B_0x001D", b0x001B_0x001D, sizeof(b0x001B_0x001D));
+  printUInt16("rec_size", rec_size);
+  printUInt32("offset_block3", offset_block3 + offset);
+  printArrayUInt8("b0x0025_0x0029", b0x0025_0x0029, sizeof(b0x0025_0x0029));
+}
+
+void CMap::subdiv_t::print() const {
+  if (next) {
+    printf("--- subdiv #%i next #%i---\n", n, next);
+  } else {
+    printf("--- subdiv #%i ---\n", n);
+  }
+  printf("north %f east  %f south %f west  %f\n", RAD_TO_DEG * north, RAD_TO_DEG * east, RAD_TO_DEG * south, RAD_TO_DEG * west);
+  printf("shift %i level %i\n", shift, level);
+  printf("rgn_start %08X rgn_end %08X\n", rgn_start, rgn_end);
+  printf("Terminate %i hasPoints %i hasPois %i hasPolylines %i hasPolygons %i\n", terminate, hasPoints, hasPois, hasPolylines, hasPolygons);
+  printf("offsetPolygons2:  %08X  lengthPolygons2:  %08X\n", offsetPolygons2, lengthPolygons2);
+  printf("offsetPolylines2: %08X  lengthPolylines2: %08X\n", offsetPolylines2, lengthPolylines2);
+  printf("offsetPoints2:    %08X  lengthPoints2:    %08X\n", offsetPoints2, lengthPoints2);
+  printf("iCenterLng %f iCenterLat %f\n", GARMIN_DEG(iCenterLng), GARMIN_DEG(iCenterLat));
+}
+
+void CMap::subdiv_t::printLite() const {
+  printf("subdiv: %i | zoom: %i | pt: %i | poi: %i | ln: %i | pg: %i\n", n, level, hasPoints, hasPois, hasPolylines, hasPolygons);
+}
+
+QString CMap::roundToDigits(double value, int precision, int cut) {
+  QString temp = QString::number(value, 'f', precision);
+  int decimalPoint = temp.indexOf('.');
+  if (decimalPoint != -1 && temp.length() > decimalPoint + cut + 1) {
+    return temp.left(decimalPoint + cut + 1);
+  }
+  return temp;
+}
+
+void CMap::print(const char* format, ...) {
+  QMutexLocker lock(&mutex);
+  va_list args;
+  va_start(args, format);
+  vfprintf(stdout, format, args);
+  va_end(args);
+
+  fflush(stdout);
+}
+
+void CMap::readFAT(QFile& file) {
+  subfiles.clear();
+  file.seek(0);
+
+  gmapsupp_imghdr_t imghdr;
+  file.read((char*)&imghdr, sizeof(gmapsupp_imghdr_t));
+  file.seek(imghdr.offsetFAT * 0x200);
+
+  print("---- Header --- size(%08X)\n", sizeof(gmapsupp_imghdr_t));
+  imghdr.print();
+
+  if (imghdr.desc1) {
+    nameStr = QString::fromLatin1(imghdr.desc1).trimmed();
   }
 
-  void decodeRgn(CFileExt &file, const subdiv_desc_t &subdiv, IGarminStrTbl *strtbl, const QByteArray &rgndata, polytype_t &polylines, polytype_t &polygons, pointtype_t &points, pointtype_t &pois)
+  size_t blocksize = imghdr.blocksize();
+
+  print("---- FAT --- \n");
+  FATBlock_t FATBlock;
+  file.read((char*)&FATBlock, sizeof(FATBlock_t));
+  while (FATBlock.flag == 1) {
+    if (file.atEnd()) {
+      throw CException("Premature end of file.");
+    }
+
+    char tmpstr[64] = {0};
+    memcpy(tmpstr, FATBlock.name, sizeof(FATBlock.name) + sizeof(FATBlock.type));
+    tmpstr[sizeof(FATBlock.name) + sizeof(FATBlock.type)] = 0;
+
+    if (FATBlock.size != 0 && !subfiles.contains(tmpstr) /*&& tmpstr[0] != 0x20*/) {
+      subfile_t& subfile = subfiles[tmpstr];
+      subfile.name = tmpstr;
+
+      memcpy(tmpstr, FATBlock.type, sizeof(FATBlock.type));
+      tmpstr[sizeof(FATBlock.type)] = 0;
+
+      subfile_part_t& part = subfile.parts[tmpstr];
+      part.size = FATBlock.size;
+      part.offset = FATBlock.blocks[0] * static_cast<quint32>(blocksize);
+
+      subfile_part_t& subfilePart = subfileParts[tmpstr];
+      subfilePart.size = FATBlock.size;
+      subfilePart.offset = FATBlock.blocks[0] * static_cast<quint32>(blocksize);
+      // subfilePart.headerSize = 0;
+
+      print("%s %s %08X %08X %02X\n", subfile.name.toLatin1().data(), tmpstr, part.offset, part.size, FATBlock.part);
+    }
+
+    file.read((char*)&FATBlock, sizeof(FATBlock_t));
+  }
+}
+
+QString CMap::convPtDegStr(const QPointF& point, quint32 level) {
+  const double y = qRadiansToDegrees(point.y());
+  const double x = qRadiansToDegrees(point.x());
+  //     if (y < 41.0 || x < 21.0)
+  //     {
+  // #ifdef DEBUG_WRITE_TO_OUTPUT
+  //       return QString("; Possibly bitstream error (y < 41.0 || x < 21.0) x:%1
+  //       y:%2").arg(x).arg(y);
+  // #else
+  //       return "";
+  // #endif
+  //     }
+  //     if (y > 45.0 || x > 27.0)
+  //     {
+  // #ifdef DEBUG_WRITE_TO_OUTPUT
+  //       return QString("; Possibly bitstream error (y > 45.0 || x > 27.0) x:%1
+  //       y:%2").arg(x).arg(y);
+  // #else
+  //       return "";
+  // #endif
+  //     }
+
+  // return QString("%1(%2,%3)").arg(level == -1 ? "" :
+  // QString("Data%1=").arg(level)).arg(roundToDigits(y, 5, 3)).arg(roundToDigits(x, 5, 3));
+  // return QString("%1(%2,%3)").arg(level == -1 ? "" :
+  // QString("Data%1=").arg(level)).arg(roundToDigits(y, 5, 4)).arg(roundToDigits(x, 5, 4));
+  return QString("%1(%2,%3)").arg(level == -1 ? "" : QString("Data%1=").arg(level)).arg(y, 0, 'f', 5).arg(x, 0, 'f', 5);
+}
+
+QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, quint32 len, bool isLine) {
+  QStringList errorSl;
+  QStringList resultSl;
+
+  QPointF pointFirst;
+  QPointF pointPrev;
+
+  for (const QPointF& point : polyline) {
+    if (pointFirst.isNull()) {
+      pointFirst = point;
+    } else if (pointPrev == point) {
+#ifdef DEBUG_WRITE_TO_OUTPUT
+      qDebug() << "; Skipping next dupe point";
+      errorSl << "; Skipping next dupe point";
+#endif
+      continue;
+    }
+    pointPrev = point;
+
+    const QString output = convPtDegStr(point);
+    if (output.startsWith(";")) {
+#ifdef DEBUG_WRITE_TO_OUTPUT
+      errorSl << output;
+#endif
+    } else {
+      resultSl << output;
+    }
+  }
+
+  int size = resultSl.size();
+  if (size > 1 && resultSl.first() == resultSl.last()) {
+#ifdef DEBUG_WRITE_TO_OUTPUT
+    // maybe a bug or is by design
+    qDebug() << "; Skipping last dupe point";
+    errorSl << "; Skipping last dupe point";
+#endif
+    resultSl.removeLast();
+    --size;
+  }
+
+  // todo: da proverq za brojkite e tipa tuk!
+  if (isLine == true && size < 2) {
+#ifdef DEBUG_WRITE_TO_OUTPUT
+    return "; Does not make much sense: polyline with less then minimum points";
+#else
+    return "";
+#endif
+  } else if (isLine == false && size < 3)  // maybe 4?
   {
-    if ((subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 && !subdiv.lengthPoints2))
-    {
-      return;
+    // a polygon with 3 points (with automatic closure) does not make much sense either
+#ifdef DEBUG_WRITE_TO_OUTPUT
+    return "; Does not make much sense: polygon with less then minimum points";
+#else
+    return "";
+#endif
+  }
+
+  return QString("%1%2Data%3=%4").arg(errorSl.join('\n')).arg(errorSl.size() ? "\n" : "").arg(level).arg(resultSl.join(','));
+}
+
+void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata, polytype_t& polylines, polytype_t& polygons, pointtype_t& points,
+                     pointtype_t& pois) {
+  if ((subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 && !subdiv.lengthPoints2)) {
+    return;
+  }
+
+  points.clear();
+  pois.clear();
+  polylines.clear();
+  polygons.clear();
+
+  const quint8* pRawData = (quint8*)rgndata.data();
+
+  quint32 opnt = 0, opoi = 0, opline = 0, opgon = 0;
+  quint32 objCnt = subdiv.hasPois + subdiv.hasPoints + subdiv.hasPolylines + subdiv.hasPolygons;
+
+  quint16* pOffset = (quint16*)(pRawData + subdiv.rgn_start);
+
+  // test for points
+  if (subdiv.hasPoints) {
+    opnt = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
+  }
+
+  // test for pois
+  if (subdiv.hasPois) {
+    if (opnt) {
+      opoi = gar_load(uint16_t, *pOffset);
+      opoi += subdiv.rgn_start;
+      ++pOffset;
+    } else {
+      opoi = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
     }
+  }
 
-    points.clear();
-    pois.clear();
-    polylines.clear();
-    polygons.clear();
-
-    const quint8 *pRawData = (quint8 *)rgndata.data();
-
-    quint32 opnt = 0, opoi = 0, opline = 0, opgon = 0;
-    quint32 objCnt = subdiv.hasPois + subdiv.hasPoints + subdiv.hasPolylines + subdiv.hasPolygons;
-
-    quint16 *pOffset = (quint16 *)(pRawData + subdiv.rgn_start);
-
-    // test for points
-    if (subdiv.hasPoints)
-    {
-      opnt = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
+  // test for polylines
+  if (subdiv.hasPolylines) {
+    if (opnt || opoi) {
+      opline = gar_load(uint16_t, *pOffset);
+      opline += subdiv.rgn_start;
+      ++pOffset;
+    } else {
+      opline = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
     }
+  }
 
-    // test for pois
-    if (subdiv.hasPois)
-    {
-      if (opnt)
-      {
-        opoi = gar_load(uint16_t, *pOffset);
-        opoi += subdiv.rgn_start;
-        ++pOffset;
-      }
-      else
-      {
-        opoi = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
-      }
+  // test for polygons
+  if (subdiv.hasPolygons) {
+    if (opnt || opoi || opline) {
+      opgon = gar_load(uint16_t, *pOffset);
+      opgon += subdiv.rgn_start;
+      ++pOffset;
+    } else {
+      opgon = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
     }
-
-    // test for polylines
-    if (subdiv.hasPolylines)
-    {
-      if (opnt || opoi)
-      {
-        opline = gar_load(uint16_t, *pOffset);
-        opline += subdiv.rgn_start;
-        ++pOffset;
-      }
-      else
-      {
-        opline = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
-      }
-    }
-
-    // test for polygons
-    if (subdiv.hasPolygons)
-    {
-      if (opnt || opoi || opline)
-      {
-        opgon = gar_load(uint16_t, *pOffset);
-        opgon += subdiv.rgn_start;
-        ++pOffset;
-      }
-      else
-      {
-        opgon = (objCnt - 1) * sizeof(quint16) + subdiv.rgn_start;
-      }
-    }
+  }
 
 #ifdef DEBUG_SHOW_POLY_DATA_SUBDIV
-    qDebug() << "--- Subdivision" << subdiv.level << subdiv.n << file.fileName() << "---";
-    qDebug() << "addr:   " << Qt::hex << subdiv.rgn_start << "-" << subdiv.rgn_end << "|" << opnt << opoi << opline << opgon;
+  qDebug() << "Subdiv" << subdiv.level << subdiv.n << file.fileName() << "| addr:" << Qt::hex << subdiv.rgn_start << "-" << subdiv.rgn_end << "|" << opnt << opoi << opline
+           << opgon;
 #endif
 
-    CGarminPolygon p;
+  // decode points
+  if (subdiv.hasPoints) {
+    const quint8* pData = pRawData + opnt;
+    const quint8* pEnd = pRawData + (opoi ? opoi : opline ? opline : opgon ? opgon : subdiv.rgn_end);
+    while (pData < pEnd) {
+      CGarminPoint pt;
+      pData += pt.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
 
-    // decode points
-    if (subdiv.hasPoints)
-    {
-      const quint8 *pData = pRawData + opnt;
-      const quint8 *pEnd = pRawData + (opoi ? opoi : opline ? opline
-                                                 : opgon    ? opgon
-                                                            : subdiv.rgn_end);
-      while (pData < pEnd)
-      {
-        CGarminPoint p;
-        pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
-
-        // skip points outside our current viewport
-        if (!subdiv.area.contains(p.pos))
-        {
-          // qDebug() << "skip points outside our current viewport:" << subdiv.area.topLeft() << subdiv.area.bottomRight() << p.pos;
-          continue;
-        }
-
-        if (strtbl)
-        {
-          p.isLbl6 ? strtbl->get(file, p.lbl_ptr, IGarminStrTbl::poi, p.labels) : strtbl->get(file, p.lbl_ptr, IGarminStrTbl::norm, p.labels);
-        }
-
-        points.push_back(p);
-      }
-    }
-
-    // decode pois
-    if (subdiv.hasPois)
-    {
-      const quint8 *pData = pRawData + opoi;
-      const quint8 *pEnd = pRawData + (opline ? opline : opgon ? opgon
-                                                               : subdiv.rgn_end);
-      while (pData < pEnd)
-      {
-        CGarminPoint p;
-        pData += p.decode1(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
-
-        // skip points outside our current viewport
-        if (!subdiv.area.contains(p.pos))
-        {
-          continue;
-        }
-
-        if (strtbl)
-        {
-          p.isLbl6 ? strtbl->get(file, p.lbl_ptr, IGarminStrTbl::poi, p.labels) : strtbl->get(file, p.lbl_ptr, IGarminStrTbl::norm, p.labels);
-        }
-
-        pois.push_back(p);
-      }
-    }
-
-    // decode polylines
-    if (subdiv.hasPolylines)
-    {
-      CGarminPolygon::cnt = 0;
-      const quint8 *pData = pRawData + opline;
-      const quint8 *pEnd = pRawData + (opgon ? opgon : subdiv.rgn_end);
-      while (pData < pEnd)
-      {
-        pData += p.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd);
-
-        // skip points outside our current viewport
-        if (isCompletelyOutside(p.pixel, subdiv.area))
-        {
-          continue;
-        }
-
-        if (strtbl && !p.lbl_in_NET && p.lbl_info)
-        {
-          strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
-        }
-        else if (strtbl && p.lbl_in_NET && p.lbl_info)
-        {
-          strtbl->get(file, p.lbl_info, IGarminStrTbl::net, p.labels);
-        }
-
-        polylines.push_back(p);
-      }
-    }
-
-    // decode polygons
-    if (subdiv.hasPolygons)
-    {
-      CGarminPolygon::cnt = 0;
-      const quint8 *pData = pRawData + opgon;
-      const quint8 *pEnd = pRawData + subdiv.rgn_end;
-
-      while (pData < pEnd)
-      {
-        pData += p.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
-
-        // skip points outside our current viewport
-        if (isCompletelyOutside(p.pixel, subdiv.area))
-        {
-          continue;
-        }
-
-        if (strtbl && !p.lbl_in_NET && p.lbl_info)
-        {
-          strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
-        }
-        else if (strtbl && p.lbl_in_NET && p.lbl_info)
-        {
-          strtbl->get(file, p.lbl_info, IGarminStrTbl::net, p.labels);
-        }
-
-        polygons.push_back(p);
-      }
-    }
-
-    // extended type
-    if (subdiv.lengthPolygons2)
-    {
-      // qDebug() << "Exteneded type: polygon";
-      // qDebug() << "polyg off: " << Qt::hex << subdiv.offsetPolygons2;
-      // qDebug() << "polyg len: " << Qt::hex << subdiv.lengthPolygons2;
-      // qDebug() << "polyg end: " << Qt::hex << subdiv.lengthPolygons2 + subdiv.offsetPolygons2;
-      const quint8 *pData = pRawData + subdiv.offsetPolygons2;
-      const quint8 *pEnd = pData + subdiv.lengthPolygons2;
-      while (pData < pEnd)
-      {
-        // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
-        pData += p.decodeEx(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
-
-        // skip points outside our current viewport
-        if (isCompletelyOutside(p.pixel, subdiv.area))
-        {
-          continue;
-        }
-
-        if (strtbl && !p.lbl_in_NET && p.lbl_info)
-        {
-          strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
-        }
-
-        polygons.push_back(p);
-      }
-    }
-
-    if (subdiv.lengthPolylines2)
-    {
-      // qDebug() << "Exteneded type: polyline";
-      // qDebug() << "polyl off: " << Qt::hex << subdiv.offsetPolylines2;
-      // qDebug() << "polyl len: " << Qt::hex << subdiv.lengthPolylines2;
-      // qDebug() << "polyl end: " << Qt::hex << subdiv.lengthPolylines2 + subdiv.offsetPolylines2;
-      const quint8 *pData = pRawData + subdiv.offsetPolylines2;
-      const quint8 *pEnd = pData + subdiv.lengthPolylines2;
-      while (pData < pEnd)
-      {
-        // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
-        pData += p.decodeEx(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd);
-
-        // skip points outside our current viewport
-        if (isCompletelyOutside(p.pixel, subdiv.area))
-        {
-          continue;
-        }
-
-        if (strtbl && !p.lbl_in_NET && p.lbl_info)
-        {
-          strtbl->get(file, p.lbl_info, IGarminStrTbl::norm, p.labels);
-        }
-
-        polylines.push_back(p);
-      }
-    }
-
-    if (subdiv.lengthPoints2)
-    {
-      qDebug() << "Exteneded type: point";
-      qDebug() << "point off: " << Qt::hex << subdiv.offsetPoints2;
-      qDebug() << "point len: " << Qt::hex << subdiv.lengthPoints2;
-      qDebug() << "point end: " << Qt::hex << subdiv.lengthPoints2 + subdiv.offsetPoints2;
-
-      const quint8 *pData = pRawData + subdiv.offsetPoints2;
-      const quint8 *pEnd = pData + subdiv.lengthPoints2;
-      while (pData < pEnd)
-      {
-        CGarminPoint p;
-        // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
-        pData += p.decodeEx(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData, pEnd);
-
-        // skip points outside our current viewport
-        if (!subdiv.area.contains(p.pos))
-        {
-          continue;
-        }
-
-        if (strtbl)
-        {
-          p.isLbl6 ? strtbl->get(file, p.lbl_ptr, IGarminStrTbl::poi, p.labels) : strtbl->get(file, p.lbl_ptr, IGarminStrTbl::norm, p.labels);
-        }
-
-        pois.push_back(p);
-      }
-    }
-
-    QStringList sl = QStringList();
-
-    int count = 0;
-    for (const CGarminPoint &pt : points)
-    {
-      QStringList tmpPoints;
-      ++count;
-      // tmpPoints << QString("[POINT] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) << "Type=0x" + QString::number(pt.type, 16);
-      // tmpPoints << QString("[POI] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) << "Type=0x" + QString::number(pt.type, 16);
-      tmpPoints << QString("[POI]") << "Type=0x" + QString::number(pt.type, 16);
-
-      int i = 0;
-      if (pt.hasLabel())
-      {
-        if (pt.labels.size() > 0 && pt.labels.length() == 1)
-        {
-          tmpPoints << QString("Label=%1").arg(pt.labels.at(0));
-        }
-        else
-        {
-          for (const QString &l : pt.labels)
-          {
-            tmpPoints << QString("Label%1=%2").arg(i).arg(l);
-            ++i;
-          }
-        }
+      if (strtbl) {
+        pt.isLbl6 ? strtbl->get(file, pt.lbl_ptr, IGarminStrTbl::poi, pt.labels) : strtbl->get(file, pt.lbl_ptr, IGarminStrTbl::norm, pt.labels);
       }
 
-      if (!pt.pos.isNull())
-      {
-        const QString output = convPtDegStr(pt.pos);
-        if (output.startsWith(";"))
-        {
-          qDebug() << QString("[W] %1").arg(output);
-          tmpPoints << output;
-        }
-        else if (output.length() == 0)
-        {
-          continue;
-        }
-        else
-        {
-          tmpPoints << QString("Data%1=%2").arg(subdiv.level).arg(output);
-        }
-      }
-      tmpPoints << "[END]\n";
-
-      if (pt.type < 0x10000)
-      {
-        slPoints << tmpPoints.join("\n");
-      }
-      else
-      {
-        slPoints2 << tmpPoints.join("\n");
-      }
-    }
-
-    count = 0;
-    for (const CGarminPoint &poi : pois)
-    {
-      QStringList tmpPois;
-      ++count;
-      // tmpPois << QString("[POI] ; subdiv=%1 | level=%2 | count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(poi.type, 16);
-      tmpPois << QString("[POI]") << "Type=0x" + QString::number(poi.type, 16);
-
-      int i = 0;
-      if (poi.hasLabel())
-      {
-        if (poi.labels.length() == 1)
-        {
-          tmpPois << QString("Label=%1").arg(poi.labels.at(0));
-        }
-        else
-        {
-          for (const QString &l : poi.labels)
-          {
-            tmpPois << QString("Label%1=%2").arg(i).arg(l);
-            ++i;
-          }
-        }
-      }
-
-      if (!poi.pos.isNull())
-      {
-        const QString output = convPtDegStr(poi.pos);
-        if (output.startsWith(";"))
-        {
-          qDebug() << QString("[W] %1").arg(output);
-          tmpPois << output;
-        }
-        else if (output.length() == 0)
-        {
-          continue;
-        }
-        else
-        {
-          tmpPois << QString("Data%1=%2").arg(subdiv.level).arg(output);
-        }
-      }
-      tmpPois << "[END]\n";
-
-      if (poi.type < 0x10000)
-      {
-        slPois << tmpPois.join("\n");
-      }
-      else
-      {
-        slPois2 << tmpPois.join("\n");
-      }
-    }
-
-    count = 0;
-    // qDebug() << "total polylines:" << polylines.length();
-    for (const CGarminPolygon &ln : polylines)
-    {
-      QStringList tmpPolylines;
-      ++count;
-      if (ln.type == 0x0)
-      {
-        tmpPolylines << QString("; Invalid type: %1").arg(0x0);
-      }
-
-      // tmpPolylines << QString("[POLYLINE] ; subdiv=%1 | level=%2 | count=%3 | hasSubType=?").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(ln.type, 16);
-      tmpPolylines << QString("[POLYLINE]") << "Type=0x" + QString::number(ln.type, 16);
-
-      int i = 0;
-      if (ln.hasLabel())
-      {
-        if (ln.labels.length() == 1)
-        {
-          tmpPolylines << QString("Label=%1").arg(ln.labels.at(0));
-        }
-        else
-        {
-          for (const QString &l : ln.labels)
-          {
-            tmpPolylines << QString("Label%1=%2").arg(i).arg(l);
-            ++i;
-          }
-        }
-      }
-
-      if (ln.direction)
-      {
-        tmpPolylines << "DirIndicator=1";
-      }
-
-      const QString output = convLnDegStr(ln.coords, subdiv.level, ln.len, true);
-      if (output.length() == 0)
-      {
-        continue;
-      }
-
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      if (output.contains("; Possibly bitstream error"))
-      {
-        tmpPolylines << QString("; Please provide more debug info here:\n; BS Length: %1; Start data: %2").arg(ln.len).arg(ln.debugData);
-      }
-      else
-      {
-        tmpPolylines << QString("; DEBUG ONLY:\n; BS Length: %1; Start data: %2").arg(ln.len).arg(ln.debugData);
-      }
-#endif
-
-      tmpPolylines << output;
-      tmpPolylines << "[END]\n";
-      if (ln.type < 0x10000)
-      {
-        slPolylines << tmpPolylines.join("\n");
-      }
-      else
-      {
-        slPolylines2 << tmpPolylines.join("\n");
-      }
-    }
-
-    count = 0;
-    for (const CGarminPolygon &pg : polygons)
-    {
-      QStringList tmpPolygons;
-      ++count;
-      if (pg.type == 0x0)
-      {
-        tmpPolygons << QString("; Invalid type: %1").arg(0x0);
-      }
-
-      // tmpPolygons << QString("[POLYGON] ; subdiv=%1 | level=%2 | count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" + QString::number(pg.type, 16);
-      tmpPolygons << QString("[POLYGON]") << "Type=0x" + QString::number(pg.type, 16);
-
-      int i = 0;
-      if (pg.hasLabel())
-      {
-        if (pg.labels.length() == 1)
-        {
-          tmpPolygons << QString("Label=%1").arg(pg.labels.at(0));
-        }
-        else
-        {
-          for (const QString &l : pg.labels)
-          {
-            tmpPolygons << QString("Label%1=%2").arg(i).arg(l);
-            ++i;
-          }
-        }
-      }
-
-      const QString output = convLnDegStr(pg.coords, subdiv.level, pg.len, false);
-      if (output.length() == 0)
-      {
-        continue;
-      }
-
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      if (output.contains("; Possibly bitstream error"))
-      {
-        tmpPolygons << QString("; Please provide more debug info here:\n; BS Length: %1; Start data: %2").arg(pg.len).arg(pg.debugData);
-      }
-      else
-      {
-        tmpPolygons << QString("; DEBUG ONLY:\n; BS Length: %1; Start data: %2").arg(pg.len).arg(pg.debugData);
-      }
-#endif
-
-      tmpPolygons << output;
-      tmpPolygons << "[END]\n";
-      if (pg.type < 0x10000)
-      {
-        slPolygons << tmpPolygons.join("\n");
-      }
-      else
-      {
-        slPolygons2 << tmpPolygons.join("\n");
-      }
+      points.push_back(pt);
     }
   }
 
-  void readBasics()
-  {
-    char tmpstr[64];
-    qint64 fsize = QFileInfo(inputFile).size();
+  // decode pois
+  if (subdiv.hasPois) {
+    const quint8* pData = pRawData + opoi;
+    const quint8* pEnd = pRawData + (opline ? opline : opgon ? opgon : subdiv.rgn_end);
+    while (pData < pEnd) {
+      CGarminPoint po;
+      pData += po.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
 
-    CFileExt file(inputFile);
-    if (!file.open(QIODevice::ReadOnly))
-    {
-      throw exce_t(eErrOpen, tr("Failed to open: ") + inputFile);
-    }
-
-    mask = (quint8)*file.data(0, 1);
-
-    mask32 = mask;
-    mask32 <<= 8;
-    mask32 |= mask;
-    mask32 <<= 8;
-    mask32 |= mask;
-    mask32 <<= 8;
-    mask32 |= mask;
-
-    mask64 = mask32;
-    mask64 <<= 32;
-    mask64 |= mask32;
-
-    // read hdr_img_t
-    QByteArray imghdr;
-    readFile(file, 0, sizeof(hdr_img_t), imghdr);
-    hdr_img_t *pImgHdr = (hdr_img_t *)imghdr.data();
-
-    if (strncmp(pImgHdr->signature, "DSKIMG", 7) != 0)
-    {
-      throw exce_t(errFormat, tr("Bad file format: ") + inputFile);
-    }
-    if (strncmp(pImgHdr->identifier, "GARMIN", 7) != 0)
-    {
-      throw exce_t(errFormat, tr("Bad file format: ") + inputFile);
-    }
-
-    mapdesc = QByteArray((const char *)pImgHdr->desc1, 20);
-    mapdesc += pImgHdr->desc2;
-    // qDebug() << "MAP Description:" << mapdesc;
-
-    size_t blocksize = pImgHdr->blocksize();
-
-    // 1st read FAT
-    QByteArray FATblock;
-    readFile(file, sizeof(hdr_img_t), sizeof(FATblock_t), FATblock);
-    const FATblock_t *pFATBlock = (const FATblock_t *)FATblock.data();
-
-    size_t dataoffset = sizeof(hdr_img_t);
-
-    // skip dummy blocks at the beginning
-    while (dataoffset < (size_t)fsize)
-    {
-      if (pFATBlock->flag != 0x00)
-      {
-        break;
-      }
-      dataoffset += sizeof(FATblock_t);
-      readFile(file, quint32(dataoffset), quint32(sizeof(FATblock_t)), FATblock);
-      pFATBlock = (const FATblock_t *)FATblock.data();
-    }
-
-    QSet<QString> subfileNames;
-    while (dataoffset < (size_t)fsize)
-    {
-      if (pFATBlock->flag != 0x01)
-      {
-        break;
+      if (strtbl) {
+        po.isLbl6 ? strtbl->get(file, po.lbl_ptr, IGarminStrTbl::poi, po.labels) : strtbl->get(file, po.lbl_ptr, IGarminStrTbl::norm, po.labels);
       }
 
-      memcpy(tmpstr, pFATBlock->name, sizeof(pFATBlock->name) + sizeof(pFATBlock->type));
-      tmpstr[sizeof(pFATBlock->name) + sizeof(pFATBlock->type)] = 0;
+      pois.push_back(po);
+    }
+  }
 
-      if (gar_load(quint32, pFATBlock->size) != 0 && !subfileNames.contains(tmpstr) && tmpstr[0] != 0x20)
-      {
-        subfileNames << tmpstr;
+  // decode polylines
+  if (subdiv.hasPolylines) {
+    const quint8* pData = pRawData + opline;
+    const quint8* pEnd = pRawData + (opgon ? opgon : subdiv.rgn_end);
+    while (pData < pEnd) {
+      CGarminPolygon ln;
+      pData += ln.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd);
 
-        memcpy(tmpstr, pFATBlock->name, sizeof(pFATBlock->name));
-        tmpstr[sizeof(pFATBlock->name)] = 0;
+      if (strtbl && !ln.lbl_in_NET && ln.lbl_info) {
+        strtbl->get(file, ln.lbl_info, IGarminStrTbl::norm, ln.labels);
+      } else if (strtbl && ln.lbl_in_NET && ln.lbl_info) {
+        strtbl->get(file, ln.lbl_info, IGarminStrTbl::net, ln.labels);
+      }
 
-        // skip MAPSORC.MPS section
-        if (strcmp(tmpstr, "MAPSOURC") && strcmp(tmpstr, "SENDMAP2"))
-        {
-          subfile_desc_t &subfile = subfiles[tmpstr];
-          subfile.name = tmpstr;
+      polylines.push_back(ln);
+    }
+  }
 
-          memcpy(tmpstr, pFATBlock->type, sizeof(pFATBlock->type));
-          tmpstr[sizeof(pFATBlock->type)] = 0;
+  // decode polygons
+  if (subdiv.hasPolygons) {
+    const quint8* pData = pRawData + opgon;
+    const quint8* pEnd = pRawData + subdiv.rgn_end;
+    while (pData < pEnd) {
+      CGarminPolygon pg;
+      pData += pg.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
 
-          subfile_part_t &part = subfile.parts[tmpstr];
-          part.size = gar_load(quint32, pFATBlock->size);
-          part.offset = quint32(gar_load(uint16_t, pFATBlock->blocks[0]) * blocksize);
+      if (strtbl && !pg.lbl_in_NET && pg.lbl_info) {
+        strtbl->get(file, pg.lbl_info, IGarminStrTbl::norm, pg.labels);
+      } else if (strtbl && pg.lbl_in_NET && pg.lbl_info) {
+        strtbl->get(file, pg.lbl_info, IGarminStrTbl::net, pg.labels);
+      }
+
+      polygons.push_back(pg);
+    }
+  }
+
+  // extended type
+  if (subdiv.lengthPolygons2) {
+    // qDebug() << "Exteneded type: polygon" << Qt::hex << subdiv.offsetPolygons2 << subdiv.lengthPolygons2;
+    const quint8* pData = pRawData + subdiv.offsetPolygons2;
+    const quint8* pEnd = pData + subdiv.lengthPolygons2;
+    while (pData < pEnd) {
+      CGarminPolygon pg;
+      // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
+      pData += pg.decodeExt(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
+
+      if (strtbl && !pg.lbl_in_NET && pg.lbl_info) {
+        strtbl->get(file, pg.lbl_info, IGarminStrTbl::norm, pg.labels);
+      }
+
+      polygons.push_back(pg);
+    }
+  }
+
+  if (subdiv.lengthPolylines2) {
+    // qDebug() << "Exteneded type: polyline" << Qt::hex << subdiv.offsetPolylines2 << subdiv.lengthPolylines2;
+    const quint8* pData = pRawData + subdiv.offsetPolylines2;
+    const quint8* pEnd = pData + subdiv.lengthPolylines2;
+    while (pData < pEnd) {
+      CGarminPolygon ln;
+      // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
+      pData += ln.decodeExt(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd);
+
+      if (strtbl && !ln.lbl_in_NET && ln.lbl_info) {
+        strtbl->get(file, ln.lbl_info, IGarminStrTbl::norm, ln.labels);
+      }
+
+      polylines.push_back(ln);
+    }
+  }
+
+  if (subdiv.lengthPoints2) {
+    // qDebug() << "Exteneded type: point";
+    // qDebug() << "point off: " << Qt::hex << subdiv.offsetPoints2;
+    // qDebug() << "point len: " << Qt::hex << subdiv.lengthPoints2;
+    // qDebug() << "point end: " << Qt::hex << subdiv.lengthPoints2 + subdiv.offsetPoints2;
+
+    const quint8* pData = pRawData + subdiv.offsetPoints2;
+    const quint8* pEnd = pData + subdiv.lengthPoints2;
+    while (pData < pEnd) {
+      CGarminPoint pt;
+      // qDebug() << "rgn offset:" << Qt::hex << (rgnoff + (pData - pRawData));
+      pData += pt.decodeExt(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData, pEnd);
+
+      if (strtbl) {
+        pt.isLbl6 ? strtbl->get(file, pt.lbl_ptr, IGarminStrTbl::poi, pt.labels) : strtbl->get(file, pt.lbl_ptr, IGarminStrTbl::norm, pt.labels);
+      }
+
+      pois.push_back(pt);
+    }
+  }
+
+  // qDebug() << "OPA" << subdiv.level << subdiv.n << polygons.length() << polylines.length()
+  // << pois.length() << points.length();
+
+  QStringList sl = QStringList();
+
+  int count = 0;
+  for (const CGarminPoint& pt : points) {
+    QStringList tmpPoints;
+    ++count;
+    // tmpPoints << QString("[POINT] ; subdiv=%1 | level=%2 | count=%3 |
+    // hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) <<
+    // "Type=0x" + QString::number(pt.type, 16); tmpPoints << QString("[POI] ; subdiv=%1 |
+    // level=%2 | count=%3 |
+    // hasSubType=%4").arg(subdiv.n).arg(subdiv.level).arg(count).arg(pt.hasSubType) <<
+    // "Type=0x" + QString::number(pt.type, 16);
+    tmpPoints << QString("[POI]") << "Type=0x" + QString::number(pt.type, 16);
+
+    int i = 0;
+    if (pt.hasLabel()) {
+      if (pt.labels.size() > 0 && pt.labels.length() == 1) {
+        tmpPoints << QString("Label=%1").arg(pt.labels.at(0));
+      } else {
+        for (const QString& l : pt.labels) {
+          tmpPoints << QString("Label%1=%2").arg(i).arg(l);
+          ++i;
         }
       }
-
-      dataoffset += sizeof(FATblock_t);
-      readFile(file, quint32(dataoffset), quint32(sizeof(FATblock_t)), FATblock);
-      pFATBlock = (const FATblock_t *)FATblock.data();
     }
 
-    if ((dataoffset == sizeof(hdr_img_t)) || (dataoffset >= (size_t)fsize))
-    {
-      throw exce_t(errFormat, tr("Failed to read file structure: ") + inputFile);
+    if (!pt.pos.isNull()) {
+      const QString output = convPtDegStr(pt.pos);
+      if (output.startsWith(";")) {
+        qDebug() << QString("[W] %1").arg(output);
+        tmpPoints << output;
+      } else if (output.length() == 0) {
+        continue;
+      } else {
+        tmpPoints << QString("Data%1=%2").arg(subdiv.level).arg(output);
+      }
+    }
+    tmpPoints << "[END]\n";
+
+    if (pt.type < 0x10000) {
+      slPoints << tmpPoints.join("\n");
+    } else {
+      slPoints2 << tmpPoints.join("\n");
+    }
+  }
+
+  count = 0;
+  for (const CGarminPoint& poi : pois) {
+    QStringList tmpPois;
+    ++count;
+    // tmpPois << QString("[POI] ; subdiv=%1 | level=%2 |
+    // count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" +
+    // QString::number(poi.type, 16);
+    tmpPois << QString("[POI]") << "Type=0x" + QString::number(poi.type, 16);
+
+    int i = 0;
+    if (poi.hasLabel()) {
+      if (poi.labels.length() == 1) {
+        tmpPois << QString("Label=%1").arg(poi.labels.at(0));
+      } else {
+        for (const QString& l : poi.labels) {
+          tmpPois << QString("Label%1=%2").arg(i).arg(l);
+          ++i;
+        }
+      }
     }
 
-    // gmapsupp.img files do not have a data offset field
-    if (gar_load(quint32, pImgHdr->dataoffset) == 0)
-    {
-      pImgHdr->dataoffset = gar_load(quint32, dataoffset);
+    if (!poi.pos.isNull()) {
+      const QString output = convPtDegStr(poi.pos);
+      if (output.startsWith(";")) {
+        qDebug() << QString("[W] %1").arg(output);
+        tmpPois << output;
+      } else if (output.length() == 0) {
+        continue;
+      } else {
+        tmpPois << QString("Data%1=%2").arg(subdiv.level).arg(output);
+      }
+    }
+    tmpPois << "[END]\n";
+
+    if (poi.type < 0x10000) {
+      slPois << tmpPois.join("\n");
+    } else {
+      slPois2 << tmpPois.join("\n");
+    }
+  }
+
+  count = 0;
+  // qDebug() << "total polylines:" << polylines.length();
+  for (const CGarminPolygon& ln : polylines) {
+    QStringList tmpPolylines;
+    ++count;
+    if (ln.type == 0x0) {
+      tmpPolylines << QString("; Invalid type: %1").arg(0x0);
     }
 
-    // sometimes there are dummy blocks at the end of the FAT
-    if (gar_load(quint32, pImgHdr->dataoffset) != dataoffset)
-    {
-      dataoffset = gar_load(quint32, pImgHdr->dataoffset);
+    // tmpPolylines << QString("[POLYLINE] ; subdiv=%1 | level=%2 | count=%3 |
+    // hasSubType=?").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" +
+    // QString::number(ln.type, 16);
+    tmpPolylines << QString("[POLYLINE]") << "Type=0x" + QString::number(ln.type, 16);
+
+    int i = 0;
+    if (ln.hasLabel()) {
+      if (ln.labels.length() == 1) {
+        tmpPolylines << QString("Label=%1").arg(ln.labels.at(0));
+      } else {
+        for (const QString& l : ln.labels) {
+          tmpPolylines << QString("Label%1=%2").arg(i).arg(l);
+          ++i;
+        }
+      }
     }
+
+    if (ln.direction) {
+      tmpPolylines << "DirIndicator=1";
+    }
+
+    const QString output = convLnDegStr(ln.coords, subdiv.level, ln.len, true);
+    if (output.length() == 0) {
+      continue;
+    }
+
+#ifdef DEBUG_WRITE_TO_OUTPUT
+    if (output.contains("; Possibly bitstream error")) {
+      tmpPolylines << QString(
+                          "; Please provide more debug info here:\n; BS Length: %1; "
+                          "Start data: %2")
+                          .arg(ln.len)
+                          .arg(ln.debugData);
+    } else {
+      tmpPolylines << QString("; DEBUG ONLY:\n; BS Length: %1; Start data: %2").arg(ln.len).arg(ln.debugData);
+    }
+#endif
+
+    tmpPolylines << output;
+    tmpPolylines << "[END]\n";
+    if (ln.type < 0x10000) {
+      slPolylines << tmpPolylines.join("\n");
+    } else {
+      slPolylines2 << tmpPolylines.join("\n");
+    }
+  }
+
+  count = 0;
+  for (const CGarminPolygon& pg : polygons) {
+    QStringList tmpPolygons;
+    ++count;
+    if (pg.type == 0x0) {
+      tmpPolygons << QString("; Invalid type: %1").arg(0x0);
+    }
+
+    // tmpPolygons << QString("[POLYGON] ; subdiv=%1 | level=%2 |
+    // count=%3").arg(subdiv.n).arg(subdiv.level).arg(count) << "Type=0x" +
+    // QString::number(pg.type, 16);
+    tmpPolygons << QString("[POLYGON]") << "Type=0x" + QString::number(pg.type, 16);
+
+    int i = 0;
+    if (pg.hasLabel()) {
+      if (pg.labels.length() == 1) {
+        tmpPolygons << QString("Label=%1").arg(pg.labels.at(0));
+      } else {
+        for (const QString& l : pg.labels) {
+          tmpPolygons << QString("Label%1=%2").arg(i).arg(l);
+          ++i;
+        }
+      }
+    }
+
+    const QString output = convLnDegStr(pg.coords, subdiv.level, pg.len, false);
+    if (output.length() == 0) {
+      continue;
+    }
+
+#ifdef DEBUG_WRITE_TO_OUTPUT
+    if (output.contains("; Possibly bitstream error")) {
+      tmpPolygons << QString(
+                         "; Please provide more debug info here:\n; BS Length: %1; "
+                         "Start data: %2")
+                         .arg(pg.len)
+                         .arg(pg.debugData);
+    } else {
+      tmpPolygons << QString("; DEBUG ONLY:\n; BS Length: %1; Start data: %2").arg(pg.len).arg(pg.debugData);
+    }
+#endif
+
+    tmpPolygons << output;
+    tmpPolygons << "[END]\n";
+    if (pg.type < 0x10000) {
+      slPolygons << tmpPolygons.join("\n");
+    } else {
+      slPolygons2 << tmpPolygons.join("\n");
+    }
+  }
+}
+
+void CMap::readSubfiles(QFile& file) {
+  char tmpstr[64];
+  qint64 fsize = QFileInfo(inputFile).size();
+
+  // mask = (quint8)*file.data(0, 1);
+
+  file.seek(0);
+  QByteArray m = file.read(1);
+  mask = (quint8)m[0];
+
+  mask32 = mask;
+  mask32 <<= 8;
+  mask32 |= mask;
+  mask32 <<= 8;
+  mask32 |= mask;
+  mask32 <<= 8;
+  mask32 |= mask;
+
+  mask64 = mask32;
+  mask64 <<= 32;
+  mask64 |= mask32;
+
+  // read gmapsupp_imghdr_t
+  file.seek(0);
+  QByteArray imghdr = file.read(sizeof(gmapsupp_imghdr_t));
+  gmapsupp_imghdr_t* pImgHdr = (gmapsupp_imghdr_t*)imghdr.data();
+
+  if (strncmp(pImgHdr->signature, "DSKIMG", 7) != 0) {
+    throw CException(tr("Bad file format: ") + inputFile);
+  }
+  if (strncmp(pImgHdr->identifier, "GARMIN", 7) != 0) {
+    throw CException(tr("Bad file format: ") + inputFile);
+  }
+
+  mapdesc = QByteArray((const char*)pImgHdr->desc1, 20);
+  mapdesc += pImgHdr->desc2;
+  // qDebug() << "MAP Description:" << mapdesc;
+
+  size_t blocksize = pImgHdr->blocksize();
+
+  // 1st read FAT
+  file.seek(sizeof(gmapsupp_imghdr_t));
+  QByteArray FATblock = file.read(sizeof(FATBlock_t));
+  const FATBlock_t* pFATBlock = (const FATBlock_t*)FATblock.data();
+
+  size_t dataoffset = sizeof(gmapsupp_imghdr_t);
+
+  // skip dummy blocks at the beginning
+  while (dataoffset < (size_t)fsize) {
+    if (pFATBlock->flag != 0x00) {
+      break;
+    }
+    dataoffset += sizeof(FATBlock_t);
+
+    file.seek(quint32(dataoffset));
+    QByteArray FATblock = file.read(quint32(sizeof(FATBlock_t)));
+    pFATBlock = (const FATBlock_t*)FATblock.data();
+  }
+
+  QSet<QString> subfileNames;
+  while (dataoffset < (size_t)fsize) {
+    if (pFATBlock->flag != 0x01) {
+      break;
+    }
+
+    memcpy(tmpstr, pFATBlock->name, sizeof(pFATBlock->name) + sizeof(pFATBlock->type));
+    tmpstr[sizeof(pFATBlock->name) + sizeof(pFATBlock->type)] = 0;
+
+    if (gar_load(quint32, pFATBlock->size) != 0 && !subfileNames.contains(tmpstr) && tmpstr[0] != 0x20) {
+      subfileNames << tmpstr;
+
+      memcpy(tmpstr, pFATBlock->name, sizeof(pFATBlock->name));
+      tmpstr[sizeof(pFATBlock->name)] = 0;
+
+      // skip MAPSORC.MPS section
+      if (strcmp(tmpstr, "MAPSOURC") && strcmp(tmpstr, "SENDMAP2")) {
+        subfile_t& subfile = subfiles[tmpstr];
+        subfile.name = tmpstr;
+
+        memcpy(tmpstr, pFATBlock->type, sizeof(pFATBlock->type));
+        tmpstr[sizeof(pFATBlock->type)] = 0;
+
+        subfile_part_t& part = subfile.parts[tmpstr];
+        part.size = gar_load(quint32, pFATBlock->size);
+        part.offset = quint32(gar_load(uint16_t, pFATBlock->blocks[0]) * blocksize);
+      }
+    }
+
+    dataoffset += sizeof(FATBlock_t);
+
+    file.seek(quint32(dataoffset));
+    FATblock = file.read(sizeof(FATBlock_t));
+    pFATBlock = (const FATBlock_t*)FATblock.data();
+  }
+
+  if ((dataoffset == sizeof(gmapsupp_imghdr_t)) || (dataoffset >= (size_t)fsize)) {
+    throw CException(tr("Failed to read file structure: ") + inputFile);
+  }
 
 #ifdef DEBUG_SHOW_SECT_DESC
-    {
-      QMap<QString, subfile_desc_t>::const_iterator subfile = subfiles.begin();
-      while (subfile != subfiles.end())
-      {
-        qDebug() << "--- subfile" << subfile->name << "---";
-        QMap<QString, subfile_part_t>::const_iterator part = subfile->parts.begin();
-        while (part != subfile->parts.end())
-        {
-          qDebug() << part.key() << Qt::hex << part->offset << part->size;
-          ++part;
-        }
-        ++subfile;
+  {
+    QMap<QString, subfile_t>::const_iterator subfile = subfiles.begin();
+    while (subfile != subfiles.end()) {
+      qDebug() << "--- subfile" << subfile->name << "---";
+      QMap<QString, subfile_part_t>::const_iterator part = subfile->parts.begin();
+      while (part != subfile->parts.end()) {
+        qDebug() << part.key() << Qt::hex << part->offset << part->size;
+        ++part;
       }
-    }
-#endif
-
-    int cnt = 1;
-    int tot = subfiles.count();
-
-    maparea = QRectF();
-    QMap<QString, subfile_desc_t>::iterator subfile = subfiles.begin();
-    while (subfile != subfiles.end())
-    {
-      if ((*subfile).parts.contains("GMP"))
-      {
-        throw exce_t(errFormat, tr("File is NT format. qgimg is unable to read map files with NT format: ") + inputFile);
-      }
-
-      readSubfileBasics(*subfile, file);
-
       ++subfile;
     }
+  }
+#endif
 
-    // combine copyright sections
-    copyright.clear();
-    for (const QString &str : std::as_const(copyrights))
-    {
-      if (!copyright.isEmpty())
-      {
-        copyright += "\n";
-      }
-      copyright += str;
+  int cnt = 1;
+  int tot = subfiles.count();
+
+  maparea = QRectF();
+  QMap<QString, subfile_t>::iterator subfile = subfiles.begin();
+  while (subfile != subfiles.end()) {
+    if ((*subfile).parts.contains("GMP")) {
+      throw CException(tr("File is NT format. qgimg is unable to read map files with NT format: ") + inputFile);
     }
-    // qDebug() << "copyright:" << copyright;
 
-    // qDebug() << "dimensions:\t" << "N" << (qRadiansToDegrees(maparea.bottom())) << "E" << (qRadiansToDegrees(maparea.right())) << "S" << (qRadiansToDegrees(maparea.top())) << "W" << (qRadiansToDegrees(maparea.left()));
+    qDebug() << 3 << subfile.key();
+    readSubfileBasics(*subfile, file);
+
+    ++subfile;
   }
 
-  void readSubfileBasics(subfile_desc_t &subfile, CFileExt &file)
-  {
-    // test for mandatory subfile parts
-    if (!(subfile.parts.contains("TRE") && subfile.parts.contains("RGN")))
-    {
-      return;
-    }
+  // combine copyright sections
+  // copyright.clear();
+  // for (const QString& str : std::as_const(copyrights)) {
+  //   if (!copyright.isEmpty()) {
+  //     copyright += "\n";
+  //   }
+  //   copyright += str;
+  // }
+  // qDebug() << "copyright:" << copyright;
 
-    QByteArray trehdr;
-    readFile(file, subfile.parts["TRE"].offset, sizeof(hdr_tre_t), trehdr);
-    hdr_tre_t *pTreHdr = (hdr_tre_t *)trehdr.data();
+  // qDebug() << "dimensions:\t" << "N" << (qRadiansToDegrees(maparea.bottom())) << "E" <<
+  // (qRadiansToDegrees(maparea.right())) << "S" << (qRadiansToDegrees(maparea.top())) << "W"
+  // << (qRadiansToDegrees(maparea.left()));
 
-    subfile.isTransparent = pTreHdr->POI_flags & 0x02;
-    copyrights << QString(file.data(subfile.parts["TRE"].offset + gar_load(uint16_t, pTreHdr->length), 0x7FFF));
-
-    // read map boundaries from header
-    qint32 i32;
-    i32 = gar_ptr_load(int24_t, &pTreHdr->northbound);
-    subfile.north = GARMIN_RAD(i32);
-    i32 = gar_ptr_load(int24_t, &pTreHdr->eastbound);
-    subfile.east = GARMIN_RAD(i32);
-    i32 = gar_ptr_load(int24_t, &pTreHdr->southbound);
-    subfile.south = GARMIN_RAD(i32);
-    i32 = gar_ptr_load(int24_t, &pTreHdr->westbound);
-    subfile.west = GARMIN_RAD(i32);
-
-    if (subfile.east == subfile.west)
-    {
-      subfile.east = -subfile.east;
-    }
-
-    if (subfile.west > 0 && subfile.east < 0)
-    {
-      subfile.east = -subfile.east;
-    }
-
-    subfile.area = QRectF(QPointF(subfile.west, subfile.north), QPointF(subfile.east, subfile.south));
-
-    if (maparea.isNull())
-    {
-      maparea = subfile.area;
-    }
-    else
-    {
-      maparea = maparea.united(subfile.area);
-    }
-
-    // qDebug() << "bounding area (\260)" << (qRadiansToDegrees(subfile.north)) << (qRadiansToDegrees(subfile.east)) << (qRadiansToDegrees(subfile.south)) << (qRadiansToDegrees(subfile.west));
-    // qDebug() << "bounding area (rad)" << subfile.area;
-
-    QByteArray maplevel;
-    readFile(file, subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre1_offset), gar_load(quint32, pTreHdr->tre1_size), maplevel);
-    const tre_map_level_t *pMapLevel = (const tre_map_level_t *)maplevel.data();
-
-    if (pTreHdr->flag & 0x80)
-    {
-      throw exce_t(errLock, tr("File contains locked / encrypted data. Garmin does no want you to use this file with any other software than the one supplied by Garmin."));
-    }
-
-    quint32 nlevels = gar_load(quint32, pTreHdr->tre1_size) / sizeof(tre_map_level_t);
-    quint32 nsubdivs = 0;
-    quint32 nsubdivs_last = 0;
-
-    // QMap<QString, QString> levelZoom;
-    // count subsections
-    for (quint32 i = 0; i < nlevels; ++i)
-    {
+  // Query all subfiles for possible maplevels. Exclude basemap to avoid pollution
+  for (const subfile_t& subfile : std::as_const(subfiles)) {
+    qDebug() << 4 << subfile.name << subfile.maplevels.size();
+    for (const maplevel_t& maplevel : subfile.maplevels) {
+      qDebug() << 5;
       maplevel_t ml;
-      ml.inherited = TRE_MAP_INHER(pMapLevel);
-      ml.level = TRE_MAP_LEVEL(pMapLevel);
-      ml.bits = pMapLevel->bits;
-      subfile.maplevels << ml;
-      nsubdivs += gar_load(uint16_t, pMapLevel->nsubdiv);
-      nsubdivs_last = gar_load(uint16_t, pMapLevel->nsubdiv);
-      // levelZoom.insert(QVariant(ml.level).toString(), QVariant(ml.bits).toString());
+      ml.bits = maplevel.bits;
+      ml.level = maplevel.level;
+      ml.inherit = maplevel.inherit;
+      maplevels << ml;
+    }
+  }
+
+  // Sort all entries, note that stable sort should insure that basemap is preferred when
+  // available std::stable_sort(maplevels.begin(), maplevels.end(), maplevel_t::GreaterThan);
+
+  // Delete any duplicates for obvious performance reasons
+  auto where = std::unique(maplevels.begin(), maplevels.end());
+  maplevels.erase(where, maplevels.end());
+
+#ifdef DEBUG_SHOW_MAPLEVELS
+  qDebug() << "========= Map levels info: =========";
+  for (int i = 0; i < maplevels.count(); ++i) {
+    maplevel_t& ml = maplevels[i];
+    qDebug() << ml.bits << ml.level << ml.inherit;
+  }
+#endif
+}
+
+void CMap::readSubfileBasics(subfile_t& subfile, QFile& file) {
+  // test for mandatory subfile parts
+  qDebug() << 6 << subfile.parts.keys();
+  if (!(subfile.parts.contains("TRE") && subfile.parts.contains("RGN"))) {
+    return;
+  }
+
+  file.seek(subfile.parts["TRE"].offset);
+  QByteArray trehdr = file.read(sizeof(hdr_tre_t));
+  hdr_tre_t* pTreHdr = (hdr_tre_t*)trehdr.data();
+
+  subfile.isTransparent = pTreHdr->POI_flags & 0x02;
+  // copyrights << QString(file.data(subfile.parts["TRE"].offset + gar_load(uint16_t, pTreHdr->size), 0x7FFF));
+
+  // read map boundaries from header
+  qint32 i32;
+  i32 = gar_ptr_load(int24_t, &pTreHdr->northbound);
+  subfile.north = GARMIN_RAD(i32);
+  i32 = gar_ptr_load(int24_t, &pTreHdr->eastbound);
+  subfile.east = GARMIN_RAD(i32);
+  i32 = gar_ptr_load(int24_t, &pTreHdr->southbound);
+  subfile.south = GARMIN_RAD(i32);
+  i32 = gar_ptr_load(int24_t, &pTreHdr->westbound);
+  subfile.west = GARMIN_RAD(i32);
+
+  if (subfile.east == subfile.west) {
+    subfile.east = -subfile.east;
+  }
+
+  if (subfile.west > 0 && subfile.east < 0) {
+    subfile.east = -subfile.east;
+  }
+
+  subfile.area = QRectF(QPointF(subfile.west, subfile.north), QPointF(subfile.east, subfile.south));
+
+  if (maparea.isNull()) {
+    maparea = subfile.area;
+  } else {
+    maparea = maparea.united(subfile.area);
+  }
+
+  // qDebug() << "bounding area (\260)" << (qRadiansToDegrees(subfile.north)) <<
+  // (qRadiansToDegrees(subfile.east)) << (qRadiansToDegrees(subfile.south)) <<
+  // (qRadiansToDegrees(subfile.west)); qDebug() << "bounding area (rad)" << subfile.area;
+
+  file.seek(subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre1_offset));
+  QByteArray maplevel = file.read(gar_load(quint32, pTreHdr->tre1_size));
+
+  const tre_1_t* pMapLevel = (const tre_1_t*)maplevel.data();
+
+  if (pTreHdr->flag & 0x80) {
+    throw CException(
+        tr("File contains locked / encrypted data. Garmin does no want you to use "
+           "this file with any other software than the one supplied by Garmin."));
+  }
+
+  quint32 nlevels = gar_load(quint32, pTreHdr->tre1_size) / sizeof(tre_1_t);
+  quint32 nsubdivs = 0;
+  quint32 nsubdivs_last = 0;
+
+  // QMap<QString, QString> levelZoom;
+  // count subsections
+  for (quint32 i = 0; i < nlevels; ++i) {
+    maplevel_t ml;
+    ml.inherit = TRE_MAP_INHER(pMapLevel);
+    ml.level = TRE_MAP_LEVEL(pMapLevel);
+    ml.bits = pMapLevel->bits;
+    subfile.maplevels << ml;
+    nsubdivs += gar_load(uint16_t, pMapLevel->subdiv);
+    nsubdivs_last = gar_load(uint16_t, pMapLevel->subdiv);
+    // levelZoom.insert(QVariant(ml.level).toString(), QVariant(ml.bits).toString());
 #ifdef DEBUG_SHOW_MAPLEVEL_DATA
-      qDebug()
-          << "level:" << TRE_MAP_LEVEL(pMapLevel) << "| inherited:" << TRE_MAP_INHER(pMapLevel) << "| bits:" << pMapLevel->bits << "| #subdivs:" << gar_load(uint16_t, pMapLevel->nsubdiv);
-#endif // DEBUG_SHOW_MAPLEVEL_DATA
-      ++pMapLevel;
-    }
-
-    quint32 nsubdivs_next = nsubdivs - nsubdivs_last;
-
-    //////////////////////////////////
-    // read subdivision information
-    //////////////////////////////////
-    // point to first map level definition
-    pMapLevel = (const tre_map_level_t *)maplevel.data();
-    // number of subdivisions per map level
-    quint32 nsubdiv = gar_load(uint16_t, pMapLevel->nsubdiv);
-
-    // point to first 16 byte subdivision definition entry
-    QByteArray subdiv_n;
-    readFile(file, subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre2_offset), gar_load(quint32, pTreHdr->tre2_size), subdiv_n);
-    tre_subdiv_next_t *pTre2N = (tre_subdiv_next_t *)subdiv_n.data();
-
-    QVector<subdiv_desc_t> subdivs;
-    subdivs.resize(nsubdivs);
-    QVector<subdiv_desc_t>::iterator subdiv = subdivs.begin();
-    QVector<subdiv_desc_t>::iterator subdiv_prev = subdivs.end();
-
-    // absolute offset of RGN data
-    QByteArray rgnhdr;
-    readFile(file, subfile.parts["RGN"].offset, sizeof(hdr_rgn_t), rgnhdr);
-    hdr_rgn_t *pRgnHdr = (hdr_rgn_t *)rgnhdr.data();
-    // subfile.parts["RGN"].offset +
-    quint32 rgnoff = gar_load(quint32, pRgnHdr->offset);
-    quint32 rgnOffPolyg2 = gar_load(quint32, pRgnHdr->offset_polyg2);
-    quint32 rgnOffPolyl2 = gar_load(quint32, pRgnHdr->offset_polyl2);
-    quint32 rgnOffPoint2 = gar_load(quint32, pRgnHdr->offset_point2);
-    quint32 rgnLenPolyg2 = gar_load(quint32, pRgnHdr->length_polyg2);
-    quint32 rgnLenPolyl2 = gar_load(quint32, pRgnHdr->length_polyl2);
-    quint32 rgnLenPoint2 = gar_load(quint32, pRgnHdr->length_point2);
-
-    // parse all 16 byte subdivision entries
-    quint32 i;
-    for (i = 0; i < nsubdivs_next; ++i, --nsubdiv)
-    {
-      subdiv->n = i;
-      subdiv->next = gar_load(uint16_t, pTre2N->next);
-      subdiv->terminate = TRE_SUBDIV_TERM(pTre2N);
-      subdiv->rgn_start = gar_ptr_load(uint24_t, &pTre2N->rgn_offset);
-      subdiv->rgn_start += rgnoff;
-      // skip if this is the first entry
-      if (subdiv_prev != subdivs.end())
-      {
-        subdiv_prev->rgn_end = subdiv->rgn_start;
-      }
-      // qDebug() << "DEBUG SUBDIV OFFSETS1:" << subdiv->n << Qt::hex << subdiv->rgn_start << subdiv_prev->rgn_end << rgnoff;
-
-      subdiv->hasPoints = pTre2N->elements & 0x10;
-      subdiv->hasPois = pTre2N->elements & 0x20;
-      subdiv->hasPolylines = pTre2N->elements & 0x40;
-      subdiv->hasPolygons = pTre2N->elements & 0x80;
-
-      // if all subdivisions of this level have been parsed, switch to the next one
-      if (nsubdiv == 0)
-      {
-        ++pMapLevel;
-        nsubdiv = gar_load(uint16_t, pMapLevel->nsubdiv);
-      }
-
-      subdiv->level = TRE_MAP_LEVEL(pMapLevel);
-      subdiv->shift = 24 - pMapLevel->bits;
-
-      qint32 cx = gar_ptr_load(uint24_t, &pTre2N->center_lng);
-      subdiv->iCenterLng = cx;
-      qint32 cy = gar_ptr_load(uint24_t, &pTre2N->center_lat);
-      subdiv->iCenterLat = cy;
-      // qDebug() << "cx:" << &pSubDivN->center_lng << subdiv->level << subdiv->shift;
-      // qDebug() << "cy:" << &pSubDivN->center_lat << subdiv->level << subdiv->shift;
-      qint32 width = TRE_SUBDIV_WIDTH(pTre2N) << subdiv->shift;
-      qint32 height = gar_load(uint16_t, pTre2N->height) << subdiv->shift;
-
-      subdiv->north = GARMIN_RAD(cy + height + 1);
-      subdiv->south = GARMIN_RAD(cy - height);
-      subdiv->east = GARMIN_RAD(cx + width + 1);
-      subdiv->west = GARMIN_RAD(cx - width);
-
-      subdiv->area = QRectF(QPointF(subdiv->west, subdiv->north), QPointF(subdiv->east, subdiv->south));
-
-      subdiv->offsetPoints2 = 0;
-      subdiv->lengthPoints2 = 0;
-      subdiv->offsetPolylines2 = 0;
-      subdiv->lengthPolylines2 = 0;
-      subdiv->offsetPolygons2 = 0;
-      subdiv->lengthPolygons2 = 0;
-
-      subdiv_prev = subdiv;
-      ++pTre2N;
-      ++subdiv;
-    }
-
-    // switch to last map level
+    qDebug() << "level:" << TRE_MAP_LEVEL(pMapLevel) << "| inherited:" << TRE_MAP_INHER(pMapLevel) << "| bits:" << pMapLevel->bits
+             << "| #subdivs:" << gar_load(uint16_t, pMapLevel->nsubdiv);
+#endif  // DEBUG_SHOW_MAPLEVEL_DATA
     ++pMapLevel;
-    // witch pointer to 14 byte subdivision sections
-    tre_subdiv_t *pSubDivL = pTre2N;
-    // parse all 14 byte subdivision entries of last map level
-    for (; i < nsubdivs; ++i)
-    {
-      subdiv->n = i;
-      subdiv->next = 0;
-      subdiv->terminate = TRE_SUBDIV_TERM(pSubDivL);
-      subdiv->rgn_start = gar_ptr_load(uint24_t, &pSubDivL->rgn_offset);
-      subdiv->rgn_start += rgnoff;
+  }
+
+  quint32 nsubdivs_next = nsubdivs - nsubdivs_last;
+
+  //////////////////////////////////
+  // read subdivision information
+  //////////////////////////////////
+  // point to first map level definition
+  pMapLevel = (const tre_1_t*)maplevel.data();
+  // number of subdivisions per map level
+  quint32 nsubdiv = gar_load(uint16_t, pMapLevel->subdiv);
+
+  // point to first 16 byte subdivision definition entry
+
+  file.seek(subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre2_offset));
+  QByteArray subdiv_n = file.read(pTreHdr->tre2_size);
+  tre_2_next_t* pTre2N = (tre_2_next_t*)subdiv_n.data();
+
+  QVector<subdiv_t> subdivs;
+  subdivs.resize(nsubdivs);
+  QVector<subdiv_t>::iterator subdiv = subdivs.begin();
+  QVector<subdiv_t>::iterator subdiv_prev = subdivs.end();
+
+  // absolute offset of RGN data
+
+  file.seek(subfile.parts["RGN"].offset);
+  QByteArray rgnhdr = file.read(sizeof(hdr_rgn_t));
+  hdr_rgn_t* pRgnHdr = (hdr_rgn_t*)rgnhdr.data();
+  // subfile.parts["RGN"].offset +
+  quint32 rgnoff = gar_load(quint32, pRgnHdr->offset1);
+  quint32 rgnOffPolyg2 = gar_load(quint32, pRgnHdr->offset_polyg2);
+  quint32 rgnOffPolyl2 = gar_load(quint32, pRgnHdr->offset_polyl2);
+  quint32 rgnOffPoint2 = gar_load(quint32, pRgnHdr->offset_point2);
+  quint32 rgnLenPolyg2 = gar_load(quint32, pRgnHdr->length_polyg2);
+  quint32 rgnLenPolyl2 = gar_load(quint32, pRgnHdr->length_polyl2);
+  quint32 rgnLenPoint2 = gar_load(quint32, pRgnHdr->length_point2);
+
+  // parse all 16 byte subdivision entries
+  quint32 i;
+  for (i = 0; i < nsubdivs_next; ++i, --nsubdiv) {
+    subdiv->n = i;
+    subdiv->next = gar_load(uint16_t, pTre2N->next);
+    subdiv->terminate = TRE_SUBDIV_TERM(pTre2N);
+    subdiv->rgn_start = gar_ptr_load(uint24_t, &pTre2N->rgn_offset);
+    subdiv->rgn_start += rgnoff;
+    // skip if this is the first entry
+    if (subdiv_prev != subdivs.end()) {
       subdiv_prev->rgn_end = subdiv->rgn_start;
-      // qDebug() << "DEBUG SUBDIV OFFSETS2:" << subdiv->n << Qt::hex << subdiv->rgn_start << subdiv_prev->rgn_end << rgnoff;
-      subdiv->hasPoints = pSubDivL->elements & 0x10;
-      subdiv->hasPois = pSubDivL->elements & 0x20;
-      subdiv->hasPolylines = pSubDivL->elements & 0x40;
-      subdiv->hasPolygons = pSubDivL->elements & 0x80;
-
-      subdiv->level = TRE_MAP_LEVEL(pMapLevel);
-      subdiv->shift = 24 - pMapLevel->bits;
-
-      qint32 cx = gar_ptr_load(uint24_t, &pSubDivL->center_lng);
-      subdiv->iCenterLng = cx;
-      qint32 cy = gar_ptr_load(uint24_t, &pSubDivL->center_lat);
-      subdiv->iCenterLat = cy;
-      qint32 width = TRE_SUBDIV_WIDTH(pSubDivL) << subdiv->shift;
-      qint32 height = gar_load(uint16_t, pSubDivL->height) << subdiv->shift;
-
-      subdiv->north = GARMIN_RAD(cy + height + 1);
-      subdiv->south = GARMIN_RAD(cy - height);
-      subdiv->east = GARMIN_RAD(cx + width + 1);
-      subdiv->west = GARMIN_RAD(cx - width);
-
-      subdiv->area = QRectF(QPointF(subdiv->west, subdiv->north), QPointF(subdiv->east, subdiv->south));
-
-      subdiv->offsetPoints2 = 0;
-      subdiv->lengthPoints2 = 0;
-      subdiv->offsetPolylines2 = 0;
-      subdiv->lengthPolylines2 = 0;
-      subdiv->offsetPolygons2 = 0;
-      subdiv->lengthPolygons2 = 0;
-
-      subdiv_prev = subdiv;
-      ++pSubDivL;
-      ++subdiv;
     }
-    subdivs.last().rgn_end = gar_load(quint32, pRgnHdr->hdr_rgn_t::offset) + gar_load(quint32, pRgnHdr->hdr_rgn_t::length);
+    // qDebug() << "DEBUG SUBDIV OFFSETS1:" << subdiv->n << Qt::hex << subdiv->rgn_start <<
+    // subdiv_prev->rgn_end << rgnoff;
 
-    // read extended type elements
-    if ((gar_load(uint16_t, pTreHdr->hdr_subfile_part_t::length) >= 0x9A) && pTreHdr->tre7_size && (gar_load(uint16_t, pTreHdr->tre7_rec_size) >= sizeof(tre_subdiv2_t)))
-    {
-      rgnoff = subfile.parts["RGN"].offset;
-      // qDebug() << subdivs.count() << (pTreHdr->tre7_size / pTreHdr->tre7_rec_size) << pTreHdr->tre7_rec_size;
-      QByteArray subdiv2;
-      readFile(file, subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre7_offset), gar_load(quint32, pTreHdr->tre7_size), subdiv2);
-      tre_subdiv2_t *pSubDiv2 = (tre_subdiv2_t *)subdiv2.data();
+    subdiv->hasPoints = pTre2N->elements & 0x10;
+    subdiv->hasPois = pTre2N->elements & 0x20;
+    subdiv->hasPolylines = pTre2N->elements & 0x40;
+    subdiv->hasPolygons = pTre2N->elements & 0x80;
 
-      const quint32 entries1 = gar_load(quint32, pTreHdr->tre7_size) / gar_load(quint32, pTreHdr->tre7_rec_size);
-      const quint32 entries2 = subdivs.size();
+    // if all subdivisions of this level have been parsed, switch to the next one
+    if (nsubdiv == 0) {
+      ++pMapLevel;
+      nsubdiv = gar_load(uint16_t, pMapLevel->subdiv);
+    }
 
-      bool skipPois = (gar_load(uint16_t, pTreHdr->tre7_rec_size) != sizeof(tre_subdiv2_t));
+    subdiv->level = TRE_MAP_LEVEL(pMapLevel);
+    subdiv->shift = 24 - pMapLevel->bits;
 
-      subdiv = subdivs.begin();
-      subdiv_prev = subdivs.begin();
+    qint32 cx = gar_ptr_load(uint24_t, &pTre2N->center_lng);
+    subdiv->iCenterLng = cx;
+    qint32 cy = gar_ptr_load(uint24_t, &pTre2N->center_lat);
+    subdiv->iCenterLat = cy;
+    // qDebug() << "cx:" << &pSubDivN->center_lng << subdiv->level << subdiv->shift;
+    // qDebug() << "cy:" << &pSubDivN->center_lat << subdiv->level << subdiv->shift;
+    qint32 width = TRE_SUBDIV_WIDTH(pTre2N) << subdiv->shift;
+    qint32 height = gar_load(uint16_t, pTre2N->height) << subdiv->shift;
+
+    subdiv->north = GARMIN_RAD(cy + height + 1);
+    subdiv->south = GARMIN_RAD(cy - height);
+    subdiv->east = GARMIN_RAD(cx + width + 1);
+    subdiv->west = GARMIN_RAD(cx - width);
+
+    subdiv->area = QRectF(QPointF(subdiv->west, subdiv->north), QPointF(subdiv->east, subdiv->south));
+
+    subdiv->offsetPoints2 = 0;
+    subdiv->lengthPoints2 = 0;
+    subdiv->offsetPolylines2 = 0;
+    subdiv->lengthPolylines2 = 0;
+    subdiv->offsetPolygons2 = 0;
+    subdiv->lengthPolygons2 = 0;
+
+    subdiv_prev = subdiv;
+    ++pTre2N;
+    ++subdiv;
+  }
+
+  // switch to last map level
+  ++pMapLevel;
+  // witch pointer to 14 byte subdivision sections
+  tre_2_t* pSubDivL = pTre2N;
+  // parse all 14 byte subdivision entries of last map level
+  for (; i < nsubdivs; ++i) {
+    subdiv->n = i;
+    subdiv->next = 0;
+    subdiv->terminate = TRE_SUBDIV_TERM(pSubDivL);
+    subdiv->rgn_start = gar_ptr_load(uint24_t, &pSubDivL->rgn_offset);
+    subdiv->rgn_start += rgnoff;
+    subdiv_prev->rgn_end = subdiv->rgn_start;
+    // qDebug() << "DEBUG SUBDIV OFFSETS2:" << subdiv->n << Qt::hex << subdiv->rgn_start <<
+    // subdiv_prev->rgn_end << rgnoff;
+    subdiv->hasPoints = pSubDivL->elements & 0x10;
+    subdiv->hasPois = pSubDivL->elements & 0x20;
+    subdiv->hasPolylines = pSubDivL->elements & 0x40;
+    subdiv->hasPolygons = pSubDivL->elements & 0x80;
+
+    subdiv->level = TRE_MAP_LEVEL(pMapLevel);
+    subdiv->shift = 24 - pMapLevel->bits;
+
+    qint32 cx = gar_ptr_load(uint24_t, &pSubDivL->center_lng);
+    subdiv->iCenterLng = cx;
+    qint32 cy = gar_ptr_load(uint24_t, &pSubDivL->center_lat);
+    subdiv->iCenterLat = cy;
+    qint32 width = TRE_SUBDIV_WIDTH(pSubDivL) << subdiv->shift;
+    qint32 height = gar_load(uint16_t, pSubDivL->height) << subdiv->shift;
+
+    subdiv->north = GARMIN_RAD(cy + height + 1);
+    subdiv->south = GARMIN_RAD(cy - height);
+    subdiv->east = GARMIN_RAD(cx + width + 1);
+    subdiv->west = GARMIN_RAD(cx - width);
+
+    subdiv->area = QRectF(QPointF(subdiv->west, subdiv->north), QPointF(subdiv->east, subdiv->south));
+
+    subdiv->offsetPoints2 = 0;
+    subdiv->lengthPoints2 = 0;
+    subdiv->offsetPolylines2 = 0;
+    subdiv->lengthPolylines2 = 0;
+    subdiv->offsetPolygons2 = 0;
+    subdiv->lengthPolygons2 = 0;
+
+    subdiv_prev = subdiv;
+    ++pSubDivL;
+    ++subdiv;
+  }
+  subdivs.last().rgn_end = gar_load(quint32, pRgnHdr->hdr_rgn_t::offset1) + gar_load(quint32, pRgnHdr->hdr_rgn_t::length1);
+
+  // read extended type elements
+  if ((gar_load(uint16_t, pTreHdr->subfile_hdr_t::size) >= 0x9A) && pTreHdr->tre7_size && (gar_load(uint16_t, pTreHdr->tre7_rec_size) >= sizeof(tre_7_t))) {
+    // qDebug() << subdivs.count() << (pTreHdr->tre7_size / pTreHdr->tre7_rec_size) <<
+    // pTreHdr->tre7_rec_size;
+
+    file.seek(subfile.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre7_offset));
+    QByteArray subdiv2 = file.read(gar_load(quint32, pTreHdr->tre7_size));
+    tre_7_t* pSubDiv2 = (tre_7_t*)subdiv2.data();
+
+    // const quint32 entries1 = gar_load(quint32, pTreHdr->tre7_size) / gar_load(quint32,
+    // pTreHdr->tre7_rec_size); const quint32 entries2 = subdivs.size();
+
+    bool skipPois = (gar_load(uint16_t, pTreHdr->tre7_rec_size) != sizeof(tre_7_t));
+
+    subdiv = subdivs.begin();
+    subdiv_prev = subdivs.begin();
+    subdiv->offsetPolygons2 = gar_load(quint32, pSubDiv2->offsetPolygons) + rgnOffPolyg2;
+    subdiv->offsetPolylines2 = gar_load(quint32, pSubDiv2->offsetPolyline) + rgnOffPolyl2;
+    subdiv->offsetPoints2 = skipPois ? 0 : gar_load(quint32, pSubDiv2->offsetPoints) + rgnOffPoint2;
+
+    // qDebug() << "readSubdivInfoExt()" << Qt::hex << last.lengthPolylines2 <<
+    // last.lengthPoints2 << last.lengthPolygons2;
+
+    ++subdiv;
+    pSubDiv2 = reinterpret_cast<tre_7_t*>((quint8*)pSubDiv2 + gar_endian(uint16_t, pTreHdr->tre7_rec_size));
+
+    while (subdiv != subdivs.end()) {
       subdiv->offsetPolygons2 = gar_load(quint32, pSubDiv2->offsetPolygons) + rgnOffPolyg2;
       subdiv->offsetPolylines2 = gar_load(quint32, pSubDiv2->offsetPolyline) + rgnOffPolyl2;
       subdiv->offsetPoints2 = skipPois ? 0 : gar_load(quint32, pSubDiv2->offsetPoints) + rgnOffPoint2;
 
-      // qDebug() << "readSubdivInfoExt()" << Qt::hex << last.lengthPolylines2 << last.lengthPoints2 << last.lengthPolygons2;
+      subdiv_prev->lengthPolygons2 = subdiv->offsetPolygons2 - subdiv_prev->offsetPolygons2;
+      subdiv_prev->lengthPolylines2 = subdiv->offsetPolylines2 - subdiv_prev->offsetPolylines2;
+      subdiv_prev->lengthPoints2 = skipPois ? 0 : subdiv->offsetPoints2 - subdiv_prev->offsetPoints2;
+
+      subdiv_prev = subdiv;
 
       ++subdiv;
-      pSubDiv2 = reinterpret_cast<tre_subdiv2_t *>((quint8 *)pSubDiv2 + gar_endian(uint16_t, pTreHdr->tre7_rec_size));
-
-      while (subdiv != subdivs.end())
-      {
-        subdiv->offsetPolygons2 = gar_load(quint32, pSubDiv2->offsetPolygons) + rgnOffPolyg2;
-        subdiv->offsetPolylines2 = gar_load(quint32, pSubDiv2->offsetPolyline) + rgnOffPolyl2;
-        subdiv->offsetPoints2 = skipPois ? 0 : gar_load(quint32, pSubDiv2->offsetPoints) + rgnOffPoint2;
-
-        subdiv_prev->lengthPolygons2 = subdiv->offsetPolygons2 - subdiv_prev->offsetPolygons2;
-        subdiv_prev->lengthPolylines2 = subdiv->offsetPolylines2 - subdiv_prev->offsetPolylines2;
-        subdiv_prev->lengthPoints2 = skipPois ? 0 : subdiv->offsetPoints2 - subdiv_prev->offsetPoints2;
-
-        subdiv_prev = subdiv;
-
-        ++subdiv;
-        pSubDiv2 = reinterpret_cast<tre_subdiv2_t *>((quint8 *)pSubDiv2 + gar_endian(uint16_t, pTreHdr->tre7_rec_size));
-      }
-
-      subdiv_prev->lengthPolygons2 = rgnOffPolyg2 + rgnLenPolyg2 - subdiv_prev->offsetPolygons2;
-      subdiv_prev->lengthPolylines2 = rgnOffPolyl2 + rgnLenPolyl2 - subdiv_prev->offsetPolylines2;
-      subdiv_prev->lengthPoints2 = skipPois ? 0 : rgnOffPoint2 + rgnLenPoint2 - subdiv_prev->offsetPoints2;
+      pSubDiv2 = reinterpret_cast<tre_7_t*>((quint8*)pSubDiv2 + gar_endian(uint16_t, pTreHdr->tre7_rec_size));
     }
 
-    subfile.subdivs = subdivs;
+    subdiv_prev->lengthPolygons2 = rgnOffPolyg2 + rgnLenPolyg2 - subdiv_prev->offsetPolygons2;
+    subdiv_prev->lengthPolylines2 = rgnOffPolyl2 + rgnLenPolyl2 - subdiv_prev->offsetPolylines2;
+    subdiv_prev->lengthPoints2 = skipPois ? 0 : rgnOffPoint2 + rgnLenPoint2 - subdiv_prev->offsetPoints2;
+  }
+
+  subfile.subdivs = subdivs;
 
 #ifdef DEBUG_SHOW_SUBDIV_DATA
-    {
-      QVector<subdiv_desc_t>::iterator subdiv = subfile.subdivs.begin();
-      while (subdiv != subfile.subdivs.end())
-      {
-        qDebug() << "--- subdiv" << subdiv->n << "---";
-        qDebug() << "RGN start          " << Qt::hex << subdiv->rgn_start;
-        qDebug() << "RGN end            " << Qt::hex << subdiv->rgn_end;
-        qDebug() << "center lng         " << GARMIN_DEG(subdiv->iCenterLng);
-        qDebug() << "center lat         " << GARMIN_DEG(subdiv->iCenterLat);
-        qDebug() << "has points         " << subdiv->hasPoints;
-        qDebug() << "has pois " << subdiv->hasPois;
-        qDebug() << "has polylines      " << subdiv->hasPolylines;
-        qDebug() << "has polygons       " << subdiv->hasPolygons;
-        qDebug() << "bounding area (m)  " << subdiv->area.topLeft() << subdiv->area.bottomRight();
-        qDebug() << "map level          " << subdiv->level;
-        qDebug() << "left shifts        " << subdiv->shift;
-        qDebug() << "polyg off.         " << Qt::hex << subdiv->offsetPolygons2;
-        qDebug() << "polyg len.         " << Qt::hex << subdiv->lengthPolygons2;
-        qDebug() << "polyl off.         " << Qt::hex << subdiv->offsetPolylines2;
-        qDebug() << "polyl len.         " << Qt::hex << subdiv->lengthPolylines2;
-        qDebug() << "point off.         " << Qt::hex << subdiv->offsetPoints2;
-        qDebug() << "point len.         " << Qt::hex << subdiv->lengthPoints2;
-        ++subdiv;
-      }
+  {
+    QVector<subdiv_desc_t>::iterator subdiv = subfile.subdivs.begin();
+    while (subdiv != subfile.subdivs.end()) {
+      qDebug() << "--- subdiv" << subdiv->n << "---";
+      qDebug() << "RGN start          " << Qt::hex << subdiv->rgn_start;
+      qDebug() << "RGN end            " << Qt::hex << subdiv->rgn_end;
+      qDebug() << "center lng         " << GARMIN_DEG(subdiv->iCenterLng);
+      qDebug() << "center lat         " << GARMIN_DEG(subdiv->iCenterLat);
+      qDebug() << "has points         " << subdiv->hasPoints;
+      qDebug() << "has pois " << subdiv->hasPois;
+      qDebug() << "has polylines      " << subdiv->hasPolylines;
+      qDebug() << "has polygons       " << subdiv->hasPolygons;
+      qDebug() << "bounding area (m)  " << subdiv->area.topLeft() << subdiv->area.bottomRight();
+      qDebug() << "map level          " << subdiv->level;
+      qDebug() << "left shifts        " << subdiv->shift;
+      qDebug() << "polyg off.         " << Qt::hex << subdiv->offsetPolygons2;
+      qDebug() << "polyg len.         " << Qt::hex << subdiv->lengthPolygons2;
+      qDebug() << "polyl off.         " << Qt::hex << subdiv->offsetPolylines2;
+      qDebug() << "polyl len.         " << Qt::hex << subdiv->lengthPolylines2;
+      qDebug() << "point off.         " << Qt::hex << subdiv->offsetPoints2;
+      qDebug() << "point len.         " << Qt::hex << subdiv->lengthPoints2;
+      ++subdiv;
     }
+  }
 #endif
 
-    // qDebug() << "***" << Qt::hex << subfile.parts["RGN"].offset << (subfile.parts["RGN"].offset + subfile.parts["RGN"].size);
-    // qDebug() << "+++" << Qt::hex << rgnOffPolyg2 << (rgnOffPolyg2 + pRgnHdr->length_polyg2);
-    // qDebug() << "+++" << Qt::hex << rgnOffPolyl2 << (rgnOffPolyl2 + pRgnHdr->length_polyl2);
-    // qDebug() << "+++" << Qt::hex << rgnOffPoint2 << (rgnOffPoint2 + pRgnHdr->length_point2);
+  // qDebug() << "***" << Qt::hex << subfile.parts["RGN"].offset <<
+  // (subfile.parts["RGN"].offset + subfile.parts["RGN"].size); qDebug() << "+++" << Qt::hex
+  // << rgnOffPolyg2 << (rgnOffPolyg2 + pRgnHdr->length_polyg2); qDebug() << "+++" << Qt::hex
+  // << rgnOffPolyl2 << (rgnOffPolyl2 + pRgnHdr->length_polyl2); qDebug() << "+++" << Qt::hex
+  // << rgnOffPoint2 << (rgnOffPoint2 + pRgnHdr->length_point2);
 
-    if (subfile.parts.contains("LBL"))
-    {
-      QByteArray lblhdr;
-      readFile(file, subfile.parts["LBL"].offset, sizeof(hdr_lbl_t), lblhdr);
-      hdr_lbl_t *pLblHdr = (hdr_lbl_t *)lblhdr.data();
+  if (subfile.parts.contains("LBL")) {
+    file.seek(subfile.parts["LBL"].offset);
+    QByteArray lblhdr = file.read(sizeof(hdr_lbl_t));
+    hdr_lbl_t* pLblHdr = (hdr_lbl_t*)lblhdr.data();
 
-      quint32 offsetLbl1 = subfile.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl1_offset);
-      quint32 offsetLbl6 = subfile.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl6_offset);
+    quint32 offsetLbl1 = subfile.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl1_offset);
+    quint32 offsetLbl6 = subfile.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl6_offset);
 
-      QByteArray nethdr;
-      quint32 offsetNet1 = 0;
-      hdr_net_t *pNetHdr = nullptr;
-      if (subfile.parts.contains("NET"))
-      {
-        readFile(file, subfile.parts["NET"].offset, sizeof(hdr_net_t), nethdr);
-        pNetHdr = (hdr_net_t *)nethdr.data();
-        offsetNet1 = subfile.parts["NET"].offset + gar_load(quint32, pNetHdr->net1_offset);
-      }
+    QByteArray nethdr;
+    quint32 offsetNet1 = 0;
+    hdr_net_t* pNetHdr = nullptr;
+    if (subfile.parts.contains("NET")) {
+      file.seek(subfile.parts["NET"].offset);
+      nethdr = file.read(sizeof(hdr_net_t));
+      pNetHdr = (hdr_net_t*)nethdr.data();
+      offsetNet1 = subfile.parts["NET"].offset + gar_load(quint32, pNetHdr->net1_offset);
+    }
 
-      quint16 codepage = 0;
-      if (gar_load(uint16_t, pLblHdr->length) > 0xAA)
-      {
-        codepage = gar_load(uint16_t, pLblHdr->codepage);
-      }
+    quint16 codepage = 0;
+    if (gar_load(uint16_t, pLblHdr->size) > 0xAA) {
+      codepage = gar_load(uint16_t, pLblHdr->codepage);
+    }
 
-      if (codepage > 0)
-      {
-        mCodePage = QString("%1").arg(codepage);
-      }
+    if (codepage > 0) {
+      mCodePage = QString("%1").arg(codepage);
+    }
 
-      // qDebug() << file.fileName() << Qt::hex << offsetLbl1 << offsetLbl6 << offsetNet1;
+    // qDebug() << file.fileName() << Qt::hex << offsetLbl1 << offsetLbl6 << offsetNet1;
 
-      QObject *obj = qobject_cast<QObject *>(this);
-      switch (pLblHdr->coding)
-      {
-      case 0x06: // ascii
+    QObject* obj = qobject_cast<QObject*>(this);
+    switch (pLblHdr->coding) {
+      case 0x06:  // ascii
         subfile.strtbl = new CGarminStrTbl6(codepage, mask, obj);
         mCoding = QString("%1").arg(pLblHdr->coding);
         break;
 
-      case 0x09: // cp0, latin1, cp1251, cp1252
+      case 0x09:  // cp0, latin1, cp1251, cp1252
         subfile.strtbl = new CGarminStrTblUtf8(codepage, mask, obj);
         mCoding = QString("%1").arg(pLblHdr->coding);
         break;
 
-      case 0x0A: // cp65001, unicode, cp932, ms932
+      case 0x0A:  // cp65001, unicode, cp932, ms932
         qWarning() << "Not implemented:" << Qt::hex << pLblHdr->coding;
         break;
 
       default:
         qWarning() << "Unknown label coding:" << Qt::hex << pLblHdr->coding;
+    }
+
+    if (nullptr != subfile.strtbl) {
+      subfile.strtbl->registerLBL1(offsetLbl1, gar_load(quint32, pLblHdr->lbl1_length), pLblHdr->addr_shift);
+      subfile.strtbl->registerLBL6(offsetLbl6, gar_load(quint32, pLblHdr->lbl6_length));
+      if (nullptr != pNetHdr) {
+        subfile.strtbl->registerNET1(offsetNet1, gar_load(quint32, pNetHdr->net1_length), pNetHdr->net1_addr_shift);
+      }
+    }
+  }
+}
+
+void CMap::printHeader() {
+  bool isFirst = true;
+
+  QStringList sl;
+  QString name = "";
+  QMap<QString, QString> levelZoom;
+  QStringList zooms;
+  QStringList levels;
+
+  for (const subfile_t& subfile : std::as_const(subfiles)) {
+    if (isFirst) {
+      isFirst = false;
+
+      for (int i = 0; i < maplevels.count(); ++i) {
+        maplevel_t& ml = maplevels[i];
+        levelZoom.insert(QVariant(ml.level).toString(), QVariant(ml.bits).toString());
       }
 
-      if (nullptr != subfile.strtbl)
-      {
-        subfile.strtbl->registerLBL1(offsetLbl1, gar_load(quint32, pLblHdr->lbl1_length), pLblHdr->addr_shift);
-        subfile.strtbl->registerLBL6(offsetLbl6, gar_load(quint32, pLblHdr->lbl6_length));
-        if (nullptr != pNetHdr)
-        {
-          subfile.strtbl->registerNET1(offsetNet1, gar_load(quint32, pNetHdr->net1_length), pNetHdr->net1_addr_shift);
-        }
+      name = subfile.name;
+
+      int index = 0;
+      for (auto [key, value] : levelZoom.asKeyValueRange()) {
+        levels << QString("Level%1=%2").arg(index).arg(value);
+        zooms << QString("Zoom%1=%2").arg(index).arg(key);
+        ++index;
       }
     }
   }
 
-  void processPrimaryMapData()
-  {
-    // Query all subfiles for possible maplevels. Exclude basemap to avoid pollution
-    for (const subfile_desc_t &subfile : std::as_const(subfiles))
-    {
-      for (const maplevel_t &maplevel : subfile.maplevels)
-      {
-        map_level_t ml;
-        ml.bits = maplevel.bits;
-        ml.level = maplevel.level;
-        ml.useBaseMap = false;
-        maplevels << ml;
-      }
-    }
+  sl << "; Generated by qgimg 1.0\n"
+     << "[IMG ID]" << QString("CodePage=%1").arg(mCodePage) << QString("LblCoding=%1").arg(mCoding) << QString("ID=%1").arg(name) << QString("Name=%1").arg(mapdesc.trimmed())
+     << QString("Levels=%1").arg(levelZoom.count()) << levels << zooms << "[END-IMG ID]\n\n";
 
-    // Sort all entries, note that stable sort should insure that basemap is preferred when available
-    std::stable_sort(maplevels.begin(), maplevels.end(), map_level_t::GreaterThan);
+  of.write(codec->fromUnicode(sl.join("\n")));
+  of.flush();
+}
 
-    // Delete any duplicates for obvious performance reasons
-    auto where = std::unique(maplevels.begin(), maplevels.end());
-    maplevels.erase(where, maplevels.end());
+// void CMap::readFile(QFile& file, quint32 offset, quint32 size, QByteArray& data) {
+//   if (offset + size > file.size()) {
+//     throw exce_t(eErrOpen, tr("Failed to read: ") + inputFile);
+//   }
 
-#ifdef DEBUG_SHOW_MAPLEVELS
-    qDebug() << "========= Map levels info: =========";
-    for (int i = 0; i < maplevels.count(); ++i)
-    {
-      map_level_t &ml = maplevels[i];
-      qDebug() << ml.bits << ml.level << ml.useBaseMap;
-    }
-#endif
-  }
+//   data = QByteArray::fromRawData(file.data(offset, size), size);
+//   // if mask == 0, no xor is necessary
+//   if (mask == 0) {
+//     return;
+//   }
 
-  void printHeader()
-  {
-    bool isFirst = true;
+//   quint64* p64 = (quint64*)data.data();
+//   for (quint32 i = 0; i < size / 8; ++i) {
+//     *p64++ ^= mask64;
+//   }
+//   quint32 rest = size % 8;
+//   quint8* p = (quint8*)p64;
 
-    QStringList sl;
-    QString name = "";
-    QMap<QString, QString> levelZoom;
-    QStringList zooms;
-    QStringList levels;
+//   for (quint32 i = 0; i < rest; ++i) {
+//     *p++ ^= mask;
+//   }
+// }
 
-    for (const subfile_desc_t &subfile : std::as_const(subfiles))
-    {
-      if (isFirst)
-      {
-        isFirst = false;
-
-        for (int i = 0; i < maplevels.count(); ++i)
-        {
-          map_level_t &ml = maplevels[i];
-          levelZoom.insert(QVariant(ml.level).toString(), QVariant(ml.bits).toString());
-        }
-
-        name = subfile.name;
-
-        int index = 0;
-        for (auto [key, value] : levelZoom.asKeyValueRange())
-        {
-          levels << QString("Level%1=%2").arg(index).arg(value);
-          zooms << QString("Zoom%1=%2").arg(index).arg(key);
-          ++index;
-        }
-      }
-    }
-
-    sl << "; Generated by qgimg 1.0\n"
-       << "[IMG ID]" << QString("CodePage=%1").arg(mCodePage) << QString("LblCoding=%1").arg(mCoding)
-       << QString("ID=%1").arg(name) << QString("Name=%1").arg(mapdesc.trimmed()) << QString("Levels=%1").arg(levelZoom.count()) << levels << zooms << "[END-IMG ID]\n\n";
-
-    of.write(codec->fromUnicode(sl.join("\n")));
-    of.flush();
-  }
-
-  void readFile(CFileExt &file, quint32 offset, quint32 size, QByteArray &data)
-  {
-    if (offset + size > file.size())
-    {
-      throw exce_t(eErrOpen, tr("Failed to read: ") + inputFile);
-    }
-
-    data = QByteArray::fromRawData(file.data(offset, size), size);
-    // if mask == 0, no xor is necessary
-    if (mask == 0)
-    {
-      return;
-    }
-
-    quint64 *p64 = (quint64 *)data.data();
-    for (quint32 i = 0; i < size / 8; ++i)
-    {
-      *p64++ ^= mask64;
-    }
-    quint32 rest = size % 8;
-    quint8 *p = (quint8 *)p64;
-
-    for (quint32 i = 0; i < rest; ++i)
-    {
-      *p++ ^= mask;
-    }
-  }
-};
-
-int main(int argc, char *argv[])
-{
+int main(int argc, char* argv[]) {
   CMap cmap(argc, argv);
   return 0;
 }
