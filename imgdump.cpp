@@ -37,9 +37,7 @@
 #include <iostream>
 
 #define DEBUG_SHOW_SECT_DESC
-#define DEBUG_SHOW_MAPLEVELS
 // #define DEBUG_SHOW_POLY_DATA_SUBDIV
-// #define DEBUG_SHOW_SUBDIV_DATA
 // #define DEBUG_SHOW_MAPLEVEL_DATA
 // #define DEBUG_SHOW_POLY_DATA_DECODE
 // #define DEBUG_SHOW_POLY_DATA_DECODE_EXT
@@ -1413,28 +1411,6 @@ class CMap : public QCoreApplication {
     quint8 btObjects;
   };
 
-  // struct maplevel_t
-  // {
-  //   quint8 level;
-  //   quint8 bits;
-  //   bool useBaseMap;
-
-  //   bool operator==(const maplevel_t &ml) const
-  //   {
-  //     if (ml.bits != bits || ml.level != level || ml.useBaseMap != useBaseMap)
-  //     {
-  //       return false;
-  //     }
-  //     else
-  //     {
-  //       return true;
-  //     }
-  //   }
-
-  //   static bool GreaterThan(const maplevel_t &ml1, const maplevel_t &ml2) { return ml1.bits <
-  //   ml2.bits; }
-  // };
-
   struct maplevel_t {
     bool inherit;
     quint8 zoom;
@@ -1487,8 +1463,6 @@ class CMap : public QCoreApplication {
   struct submap_part_t {
     quint32 offset;  // file offset of submap part
     quint32 size;    // size of the submap part
-    // quint32 headerSize;
-    // submap_part_t() : offset(0), size(0), headerSize(0) {}
     submap_part_t() : offset(0), size(0) {}
   };
 
@@ -1519,7 +1493,7 @@ class CMap : public QCoreApplication {
   void print(const char* format, ...);
   void readFATOld(QFile& file);
   void readFAT(QFile& file);
-  submap_t* getSubmap(const QString& name);
+  submap_t* getSubmapPart(const QString& name);
   void readSubmaps(QFile& file);
   void readGMP(QFile& file, submap_t& submap);
   void readSubmapBasics(submap_t& submap, QFile& file);
@@ -1594,7 +1568,6 @@ class CMap : public QCoreApplication {
                                     // is only one submap. However gmapsupp.img files can hold
                                     // several submaps each with it's own submap parts.
   bool isPseudoNT = false;
-  QVector<maplevel_t> maplevels;  // combined maplevels of all tiles
   int tatalPt = 0;
   int tatalLn = 0;
   int tatalPg = 0;
@@ -1612,7 +1585,7 @@ class CMap : public QCoreApplication {
 
 CMap::CMap(int& argc, char** argv) : QCoreApplication(argc, argv) {
   QCommandLineParser parser;
-  parser.setApplicationDescription("qgimpdec 1.0");
+  parser.setApplicationDescription("qgimpdec 1.0.0");
   parser.addHelpOption();
 
   QCommandLineOption inputOption(QStringList() << "i" << "input", ".img input file", "input_file.img");
@@ -2108,7 +2081,7 @@ void CMap::readFAT(QFile& file) {
   }
 }
 
-CMap::submap_t* CMap::getSubmap(const QString& name) {
+CMap::submap_t* CMap::getSubmapPart(const QString& name) {
   for (auto it = submaps.begin(); it != submaps.end(); ++it) {
     const QString key = it.key();
     if (key.size() >= 8 && key.mid(8).compare(name, Qt::CaseSensitive) == 0) {
@@ -2116,40 +2089,6 @@ CMap::submap_t* CMap::getSubmap(const QString& name) {
     }
   }
   return nullptr;
-}
-
-void CMap::readSubmaps(QFile& file) {
-  maparea = QRectF();
-  QMap<QString, submap_t>::iterator submap = submaps.begin();
-  while (submap != submaps.end()) {
-    if ((*submap).parts.contains("GMP")) {
-      throw CException(tr("File is NT format. qgimg is unable to read map files with NT format: ") + inputFile);
-    }
-
-    readSubmapBasics(*submap, file);
-
-    ++submap;
-  }
-
-  // Query all submaps for possible maplevels. Exclude basemap to avoid pollution
-  for (const submap_t& submap : std::as_const(submaps)) {
-    qDebug() << "submap.maplevels.size:" << submap.name << submap.mapLevels.size();
-    for (const maplevel_t& maplevel : submap.mapLevels) {
-      maplevel_t ml;
-      ml.bits = maplevel.bits;
-      ml.zoom = maplevel.zoom;
-      ml.inherit = maplevel.inherit;
-      maplevels << ml;
-    }
-  }
-
-#ifdef DEBUG_SHOW_MAPLEVELS
-  qDebug() << "========= Map levels info: =========";
-  for (int i = 0; i < maplevels.count(); ++i) {
-    maplevel_t& ml = maplevels[i];
-    qDebug() << ml.bits << ml.zoom << ml.inherit;
-  }
-#endif
 }
 
 void CMap::readTRE(QFile& file, submap_t& submap) {
@@ -2415,6 +2354,20 @@ void CMap::readGMP(QFile& file, submap_t& submap) {
   }
 }
 
+void CMap::readSubmaps(QFile& file) {
+  maparea = QRectF();
+  QMap<QString, submap_t>::iterator submap = submaps.begin();
+  while (submap != submaps.end()) {
+    if ((*submap).parts.contains("GMP")) {
+      throw CException(tr("File is NT format. qgimg is unable to read map files with NT format: ") + inputFile);
+    }
+
+    readSubmapBasics(*submap, file);
+
+    ++submap;
+  }
+}
+
 void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
   // test for mandatory submap parts
   if (!(submap.parts.contains("TRE") && submap.parts.contains("RGN"))) {
@@ -2470,7 +2423,7 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
   }
 
   quint32 nlevels = gar_load(quint32, pTreHdr->tre1_size) / sizeof(tre_1_t);
-  quint32 nsubdivs = 0;
+  quint32 nSubdivs = 0;
   quint32 nsubdivs_last = 0;
 
   // QMap<QString, QString> levelZoom;
@@ -2481,7 +2434,7 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
     ml.zoom = TRE_MAP_LEVEL(mapLevelIdx);
     ml.bits = mapLevelIdx->bits;
     submap.mapLevels << ml;
-    nsubdivs += gar_load(uint16_t, mapLevelIdx->subdiv);
+    nSubdivs += gar_load(uint16_t, mapLevelIdx->subdiv);
     nsubdivs_last = gar_load(uint16_t, mapLevelIdx->subdiv);
     // levelZoom.insert(QVariant(ml.level).toString(), QVariant(ml.bits).toString());
 #ifdef DEBUG_SHOW_MAPLEVEL_DATA
@@ -2491,7 +2444,7 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
     ++mapLevelIdx;
   }
 
-  quint32 nsubdivs_next = nsubdivs - nsubdivs_last;
+  quint32 nsubdivs_next = nSubdivs - nsubdivs_last;
 
   // read subdivision information
   // point to first map level definition
@@ -2506,7 +2459,7 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
   tre_2_next_t* pTre2N = (tre_2_next_t*)subdiv_n.data();
 
   QVector<subdiv_t> subdivs;
-  subdivs.resize(nsubdivs);
+  subdivs.resize(nSubdivs);
   QVector<subdiv_t>::iterator subdiv = subdivs.begin();
   QVector<subdiv_t>::iterator subdiv_prev = subdivs.end();
 
@@ -2579,34 +2532,36 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
     ++subdiv;
   }
 
-  // switch to last map level
+  // the subdivisions of the last zoom level do not have a `next` field
   ++mapLevelIdx;
   // witch pointer to 14 byte subdivision sections
-  tre_2_t* pSubDivL = pTre2N;
+  tre_2_t* pTre2L = pTre2N;
   // parse all 14 byte subdivision entries of last map level
-  for (; i < nsubdivs; ++i) {
+  for (; i < nSubdivs; ++i) {
     subdiv->n = i;
     subdiv->next = 0;
-    subdiv->terminate = TRE_SUBDIV_TERM(pSubDivL);
-    subdiv->rgn_start = gar_ptr_load(uint24_t, &pSubDivL->rgn_offset);
+    subdiv->terminate = TRE_SUBDIV_TERM(pTre2L);
+    subdiv->rgn_start = pTre2L->rgn_offset[0] | pTre2L->rgn_offset[1] << 8 | pTre2L->rgn_offset[2] << 16;
     subdiv->rgn_start += rgnoff;
+
     subdiv_prev->rgn_end = subdiv->rgn_start;
     // qDebug() << "DEBUG SUBDIV OFFSETS2:" << subdiv->n << Qt::hex << subdiv->rgn_start <<
     // subdiv_prev->rgn_end << rgnoff;
-    subdiv->hasPoints = pSubDivL->elements & 0x10;
-    subdiv->hasPois = pSubDivL->elements & 0x20;
-    subdiv->hasPolylines = pSubDivL->elements & 0x40;
-    subdiv->hasPolygons = pSubDivL->elements & 0x80;
+
+    subdiv->hasPoints = pTre2L->elements & 0x10;
+    subdiv->hasPois = pTre2L->elements & 0x20;
+    subdiv->hasPolylines = pTre2L->elements & 0x40;
+    subdiv->hasPolygons = pTre2L->elements & 0x80;
 
     subdiv->level = TRE_MAP_LEVEL(mapLevelIdx);
     subdiv->shift = 24 - mapLevelIdx->bits;
 
-    qint32 cx = gar_ptr_load(uint24_t, &pSubDivL->center_lng);
+    qint32 cx = gar_ptr_load(uint24_t, &pTre2L->center_lng);
     subdiv->iCenterLng = cx;
-    qint32 cy = gar_ptr_load(uint24_t, &pSubDivL->center_lat);
+    qint32 cy = gar_ptr_load(uint24_t, &pTre2L->center_lat);
     subdiv->iCenterLat = cy;
-    qint32 width = TRE_SUBDIV_WIDTH(pSubDivL) << subdiv->shift;
-    qint32 height = gar_load(uint16_t, pSubDivL->height) << subdiv->shift;
+    qint32 width = TRE_SUBDIV_WIDTH(pTre2L) << subdiv->shift;
+    qint32 height = gar_load(uint16_t, pTre2L->height) << subdiv->shift;
 
     subdiv->north = GARMIN_RAD(cy + height + 1);
     subdiv->south = GARMIN_RAD(cy - height);
@@ -2623,16 +2578,13 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
     subdiv->lengthPolygons2 = 0;
 
     subdiv_prev = subdiv;
-    ++pSubDivL;
+    ++pTre2L;
     ++subdiv;
   }
   subdivs.last().rgn_end = gar_load(quint32, pRgnHdr->hdr_rgn_t::offset1) + gar_load(quint32, pRgnHdr->hdr_rgn_t::length1);
 
   // read extended type elements
   if ((gar_load(uint16_t, pTreHdr->submap_hdr_t::size) >= 0x9A) && pTreHdr->tre7_size && (gar_load(uint16_t, pTreHdr->tre7_rec_size) >= sizeof(tre_7_t))) {
-    // qDebug() << subdivs.count() << (pTreHdr->tre7_size / pTreHdr->tre7_rec_size) <<
-    // pTreHdr->tre7_rec_size;
-
     file.seek(submap.parts["TRE"].offset + gar_load(quint32, pTreHdr->tre7_offset));
     QByteArray subdiv2 = file.read(gar_load(quint32, pTreHdr->tre7_size));
     tre_7_t* pSubDiv2 = (tre_7_t*)subdiv2.data();
@@ -2640,6 +2592,7 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
     // const quint32 entries1 = gar_load(quint32, pTreHdr->tre7_size) / gar_load(quint32,
     // pTreHdr->tre7_rec_size); const quint32 entries2 = subdivs.size();
 
+    const quint16 rec_size = submap.hdrTRE.tre7_rec_size;
     bool skipPois = (gar_load(uint16_t, pTreHdr->tre7_rec_size) != sizeof(tre_7_t));
 
     subdiv = subdivs.begin();
@@ -2647,9 +2600,6 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
     subdiv->offsetPolygons2 = gar_load(quint32, pSubDiv2->offsetPolygons) + rgnOffPolyg2;
     subdiv->offsetPolylines2 = gar_load(quint32, pSubDiv2->offsetPolyline) + rgnOffPolyl2;
     subdiv->offsetPoints2 = skipPois ? 0 : gar_load(quint32, pSubDiv2->offsetPoints) + rgnOffPoint2;
-
-    // qDebug() << "readSubdivInfoExt()" << Qt::hex << last.lengthPolylines2 <<
-    // last.lengthPoints2 << last.lengthPolygons2;
 
     ++subdiv;
     pSubDiv2 = reinterpret_cast<tre_7_t*>((quint8*)pSubDiv2 + gar_endian(uint16_t, pTreHdr->tre7_rec_size));
@@ -2666,7 +2616,7 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
       subdiv_prev = subdiv;
 
       ++subdiv;
-      pSubDiv2 = reinterpret_cast<tre_7_t*>((quint8*)pSubDiv2 + gar_endian(uint16_t, pTreHdr->tre7_rec_size));
+      pSubDiv2 = reinterpret_cast<tre_7_t*>((quint8*)pSubDiv2 + rec_size);
     }
 
     subdiv_prev->lengthPolygons2 = rgnOffPolyg2 + rgnLenPolyg2 - subdiv_prev->offsetPolygons2;
@@ -2675,39 +2625,6 @@ void CMap::readSubmapBasics(submap_t& submap, QFile& file) {
   }
 
   submap.subdivs = subdivs;
-
-#ifdef DEBUG_SHOW_SUBDIV_DATA
-  {
-    QVector<subdiv_desc_t>::iterator subdiv = submap.subdivs.begin();
-    while (subdiv != submap.subdivs.end()) {
-      qDebug() << "--- subdiv" << subdiv->n << "---";
-      qDebug() << "RGN start          " << Qt::hex << subdiv->rgn_start;
-      qDebug() << "RGN end            " << Qt::hex << subdiv->rgn_end;
-      qDebug() << "center lng         " << GARMIN_DEG(subdiv->iCenterLng);
-      qDebug() << "center lat         " << GARMIN_DEG(subdiv->iCenterLat);
-      qDebug() << "has points         " << subdiv->hasPoints;
-      qDebug() << "has pois " << subdiv->hasPois;
-      qDebug() << "has polylines      " << subdiv->hasPolylines;
-      qDebug() << "has polygons       " << subdiv->hasPolygons;
-      qDebug() << "bounding area (m)  " << subdiv->area.topLeft() << subdiv->area.bottomRight();
-      qDebug() << "map level          " << subdiv->level;
-      qDebug() << "left shifts        " << subdiv->shift;
-      qDebug() << "polyg off.         " << Qt::hex << subdiv->offsetPolygons2;
-      qDebug() << "polyg len.         " << Qt::hex << subdiv->lengthPolygons2;
-      qDebug() << "polyl off.         " << Qt::hex << subdiv->offsetPolylines2;
-      qDebug() << "polyl len.         " << Qt::hex << subdiv->lengthPolylines2;
-      qDebug() << "point off.         " << Qt::hex << subdiv->offsetPoints2;
-      qDebug() << "point len.         " << Qt::hex << subdiv->lengthPoints2;
-      ++subdiv;
-    }
-  }
-#endif
-
-  // qDebug() << "***" << Qt::hex << submap.parts["RGN"].offset <<
-  // (submap.parts["RGN"].offset + submap.parts["RGN"].size); qDebug() << "+++" << Qt::hex
-  // << rgnOffPolyg2 << (rgnOffPolyg2 + pRgnHdr->length_polyg2); qDebug() << "+++" << Qt::hex
-  // << rgnOffPolyl2 << (rgnOffPolyl2 + pRgnHdr->length_polyl2); qDebug() << "+++" << Qt::hex
-  // << rgnOffPoint2 << (rgnOffPoint2 + pRgnHdr->length_point2);
 
   if (submap.parts.contains("LBL")) {
     file.seek(submap.parts["LBL"].offset);
@@ -2803,19 +2720,22 @@ void CMap::processShapes(const submap_t& submap) {
     throw CException("failed to open file: " + inputFile);
   }
 
-  for (const submap_t& submap : std::as_const(submaps)) {
+  try {
     file.seek(submap.parts["RGN"].offset);
     QByteArray rgndata = file.read(submap.parts["RGN"].size);
-    if (rgndata.length() == 0) {
-      continue;
+
+    if (rgndata.size() == 0) {
+      return;
     }
 
-    const QVector<subdiv_t>& subdivs = submap.subdivs;
-    for (const subdiv_t& subdiv : subdivs) {
-      // qDebug() << "decodeRgn() times:" << times;
+    for (const subdiv_t& subdiv : submap.subdivs) {
       decodeRgn(file, subdiv, submap.strtbl, rgndata);
     }
+  } catch (const CException& e) {
+    qDebug() << "Fatal error:" << e.msg;
   }
+
+  file.close();
 }
 
 void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata) {
@@ -3540,8 +3460,7 @@ void CMap::printHeader() {
     if (isFirst) {
       isFirst = false;
 
-      for (int i = 0; i < maplevels.count(); ++i) {
-        maplevel_t& ml = maplevels[i];
+      for (const auto& ml : submap.mapLevels) {
         levelZoom.insert(QVariant(ml.zoom).toString(), QVariant(ml.bits).toString());
       }
 
