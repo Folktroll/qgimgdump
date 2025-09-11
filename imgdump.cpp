@@ -1,5 +1,6 @@
 /**********************************************************************************************
-    Copyright (C) 2020 Oliver Eichler <oliver.eichler@gmx.de>
+    Copyright (C) 2006-2007 Oliver Eichler <oliver.eichler@gmx.de>
+    Copyright (C) 2020 Oliver Eichler <oliver.eichler@gmx.de> (parts merged from Project GarminImg)
     Modifications (C) 2025 Folk Troll
 
     This program is free software: you can redistribute it and/or modify
