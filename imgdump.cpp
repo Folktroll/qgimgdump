@@ -36,7 +36,7 @@
 #include <QtCore5Compat/QTextCodec>
 #include <iostream>
 
-#define DEBUG_SHOW_FAT
+// #define DEBUG_SHOW_FAT
 #define DEBUG_SHOW_MAPLEVELS
 // #define DEBUG_SHOW_POLY_DATA_SUBDIV
 // #define DEBUG_SHOW_MAPLEVEL_DATA
@@ -228,21 +228,21 @@ class IGarminStrTbl : public QObject {
     addrshift2 = shift;
   }
 
-  virtual void get(QFile& file, quint32 offset, type_e t, QStringList& info) = 0;
+  virtual void get(QFile& srcFile, quint32 offset, type_e t, QStringList& info) = 0;
 
  protected:
-  void readFile(QFile& file, quint32 offset, quint32 size, QByteArray& data) {
-    if (offset + size > static_cast<quint32>(file.size())) {
+  void readFile(QFile& srcFile, quint32 offset, quint32 size, QByteArray& data) {
+    if (offset + size > static_cast<quint32>(srcFile.size())) {
       data.clear();
       return;
     }
 
-    if (!file.seek(offset)) {
+    if (!srcFile.seek(offset)) {
       data.clear();
       return;
     }
 
-    data = file.read(size);
+    data = srcFile.read(size);
     if (data.size() != static_cast<qint64>(size)) {
       return;
     }
@@ -286,12 +286,12 @@ class IGarminStrTbl : public QObject {
     }
   }
 
-  quint32 calcOffset(QFile& file, const quint32 offset, type_e t) {
+  quint32 calcOffset(QFile& srcFile, const quint32 offset, type_e t) {
     quint32 newOffset = offset;
 
     if (t == poi) {
       QByteArray buffer;
-      readFile(file, offsetLBL6 + offset, sizeof(quint32), buffer);
+      readFile(srcFile, offsetLBL6 + offset, sizeof(quint32), buffer);
       newOffset = gar_ptr_load(uint32_t, buffer.data());
       newOffset = (newOffset & 0x003FFFFF);
     } else if (t == net) {
@@ -300,7 +300,7 @@ class IGarminStrTbl : public QObject {
       }
 
       QByteArray data;
-      readFile(file, offsetNET1 + (offset << addrshift2), sizeof(quint32), data);
+      readFile(srcFile, offsetNET1 + (offset << addrshift2), sizeof(quint32), data);
       newOffset = gar_ptr_load(uint32_t, data.data());
       if (newOffset & 0x00400000) {
         return 0xFFFFFFFF;
@@ -352,10 +352,10 @@ class CGarminStrTbl6 : public IGarminStrTbl {
   CGarminStrTbl6(const quint16 codepage, const quint8 mask, QObject* parent) : IGarminStrTbl(codepage, mask, parent) {};
   virtual ~CGarminStrTbl6() {};
 
-  void get(QFile& file, quint32 offset, type_e t, QStringList& labels) override {
+  void get(QFile& srcFile, quint32 offset, type_e t, QStringList& labels) override {
     labels.clear();
 
-    offset = calcOffset(file, offset, t);
+    offset = calcOffset(srcFile, offset, t);
 
     if (offset == 0xFFFFFFFF) {
       return;
@@ -374,7 +374,7 @@ class CGarminStrTbl6 : public IGarminStrTbl {
     QByteArray data;
     quint32 size = (sizeLBL1 - offset) < 200 ? (sizeLBL1 - offset) : 200;
 
-    readFile(file, offsetLBL1 + offset, size, data);
+    readFile(srcFile, offsetLBL1 + offset, size, data);
 
     p = (quint8*)data.data();
 
@@ -451,9 +451,9 @@ class CGarminStrTblUtf8 : public IGarminStrTbl {
   CGarminStrTblUtf8(const quint16 codepage, const quint8 mask, QObject* parent) : IGarminStrTbl(codepage, mask, parent) {};
   virtual ~CGarminStrTblUtf8() {};
 
-  void get(QFile& file, quint32 offset, type_e t, QStringList& labels) override {
+  void get(QFile& srcFile, quint32 offset, type_e t, QStringList& labels) override {
     labels.clear();
-    offset = calcOffset(file, offset, t);
+    offset = calcOffset(srcFile, offset, t);
 
     if (offset == 0xFFFFFFFF) {
       return;
@@ -465,7 +465,7 @@ class CGarminStrTblUtf8 : public IGarminStrTbl {
 
     QByteArray data;
     quint32 size = (sizeLBL1 - offset) < 200 ? (sizeLBL1 - offset) : 200;
-    readFile(file, offsetLBL1 + offset, size, data);
+    readFile(srcFile, offsetLBL1 + offset, size, data);
     char* lbl = data.data();
 
     char* pBuffer = buffer;
@@ -1493,31 +1493,31 @@ class CMap : public QCoreApplication {
 #define TRE_MAP_INHER(r) (((r)->zoom & 0x80) != 0)
 
   void print(const char* format, ...);
-  void readFAT(QFile& file);
-  void readSubmaps(QFile& file);
-  void readGMP(QFile& file, submap_t& submap);
+  void readFAT(QFile& srcFile);
+  void readSubmaps(QFile& srcFile);
+  void readGMP(QFile& srcFile, submap_t& submap);
   void readSubmapArea(submap_t& submap);
-  void readStringTableOld(QFile& file, submap_t& submap);
-  void readMapLevels(QFile& file, submap_t& submap);
-  tre_0_t readCopyrights(QFile& file, quint32 baseOffset, quint32 limitOffset);
-  void readSubdivInfo(QFile& file, submap_t& submap);
-  void readSubdivInfoExt(QFile& file, submap_t& submap);
-  void readStringTable(QFile& file, submap_t& submap);
-  void readTre8(QFile& file, submap_t& submap);
-  void readMPS(QFile& file, submap_t& submap);
+  void readStringTableOld(QFile& srcFile, submap_t& submap);
+  void readMapLevels(QFile& srcFile, submap_t& submap);
+  tre_0_t readCopyrights(QFile& srcFile, quint32 baseOffset, quint32 limitOffset);
+  void readSubdivInfo(QFile& srcFile, submap_t& submap);
+  void readSubdivInfoExt(QFile& srcFile, submap_t& submap);
+  void readStringTable(QFile& srcFile, submap_t& submap);
+  void readTre8(QFile& srcFile, submap_t& submap);
+  void readMPS(QFile& srcFile, submap_t& submap);
   void readProductInfo(QDataStream& stream);
   void readMapInfo(QDataStream& stream);
   QString readRawString(QDataStream& stream);
-  void readTRE(QFile& file, submap_t& submap);
-  void readRGN(QFile& file, submap_t& submap);
-  void readLBL(QFile& file, submap_t& submap);
-  void processShapes(const submap_t& submap);
-  void readShapes();
-  void decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata);
-  void writeMp(polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level);
+  void readTRE(QFile& srcFile, submap_t& submap);
+  void readRGN(QFile& srcFile, submap_t& submap);
+  void readLBL(QFile& srcFile, submap_t& submap);
+  void processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap);
+  void readShapes(QFile& srcFile);
+  void decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata);
+  void writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level);
   QString convPtDegStr(const QPointF& point, quint32 level = -1);
   QString convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine);
-  void printHeader();
+  void writeHeader(QFile& dstFile, const submap_t& submap);
 
   // file contains locked/encrypted data
   static void minno(hdr_tre_t* trehdr, QByteArray& data) {
@@ -1565,7 +1565,6 @@ class CMap : public QCoreApplication {
   QString nameStr;
   QString copyrightsStr = "";
   QMutex mutex;
-  QFile of;
   QMap<QString, submap_t> submaps;  // hold all submap descriptors: In a normal *.img file there
                                     // is only one submap. However gmapsupp.img files can hold
                                     // several submaps each with it's own submap parts.
@@ -1634,38 +1633,28 @@ CMap::CMap(int& argc, char** argv) : QCoreApplication(argc, argv) {
     }
   }
 
-  of.setFileName(outputFile);
-  if (!of.open(QIODevice::WriteOnly | QIODevice::Text)) {
-    qCritical() << "Error opening output file:" << of.errorString();
-    exit(1);
-  }
-
   codec = QTextCodec::codecForName("Windows-1251");
   if (!codec) {
     qWarning("CP1251 codec not available");
   }
 
-  QFile file(inputFile);
+  QFile srcFile(inputFile);
   try {
-    if (!file.open(QIODevice::ReadOnly)) {
-      throw CException("failed to open file: " + inputFile);
+    if (!srcFile.open(QIODevice::ReadOnly)) {
+      throw CException("Failed to open file: " + inputFile);
     }
 
-    readFAT(file);
-    readSubmaps(file);
-    readShapes();
+    readFAT(srcFile);
+    readSubmaps(srcFile);
+    readShapes(srcFile);
   } catch (const CException& e) {
     qDebug() << "Fatal error:" << e.msg;
   }
 
-  file.close();
+  srcFile.close();
 }
 
 CMap::~CMap() {
-  if (of.isOpen()) {
-    of.flush();
-    of.close();
-  }
   qDebug() << "✅ Done.";
 }
 
@@ -1919,13 +1908,13 @@ void CMap::print(const char* format, ...) {
   fflush(stdout);
 }
 
-void CMap::readFAT(QFile& file) {
+void CMap::readFAT(QFile& srcFile) {
   submaps.clear();
 
   gmapsupp_imghdr_t imghdr;
-  file.seek(0);
-  file.read((char*)&imghdr, sizeof(gmapsupp_imghdr_t));
-  file.seek(imghdr.offsetFAT * 0x200);
+  srcFile.seek(0);
+  srcFile.read((char*)&imghdr, sizeof(gmapsupp_imghdr_t));
+  srcFile.seek(imghdr.offsetFAT * 0x200);
 
   print("---- IMG Header ---- size(%08X)\n", sizeof(gmapsupp_imghdr_t));
   imghdr.print();
@@ -1963,9 +1952,9 @@ void CMap::readFAT(QFile& file) {
 
   qDebug() << "---- FAT ----";
   FATBlock_t FATBlock;
-  file.read((char*)&FATBlock, sizeof(FATBlock_t));
+  srcFile.read((char*)&FATBlock, sizeof(FATBlock_t));
   while (FATBlock.flag == 1) {
-    if (file.atEnd()) {
+    if (srcFile.atEnd()) {
       throw CException("Premature end of file.");
     }
 
@@ -1983,10 +1972,12 @@ void CMap::readFAT(QFile& file) {
       part.size = gar_load(quint32, FATBlock.size);
       part.offset = quint32(gar_load(uint16_t, FATBlock.blocks[0]) * blocksize);
 
+      submap.isPseudoNT = strcmp(typeStr, "GMP") == 0;
+
       print("%s %s %08X %08X %02X\n", nameStr, typeStr, part.offset, part.size, FATBlock.part);
     }
 
-    file.read((char*)&FATBlock, sizeof(FATBlock_t));
+    srcFile.read((char*)&FATBlock, sizeof(FATBlock_t));
   }
 
 #ifdef DEBUG_SHOW_FAT
@@ -2002,53 +1993,50 @@ void CMap::readFAT(QFile& file) {
 #endif
 }
 
-void CMap::readTRE(QFile& file, submap_t& submap) {
+void CMap::readTRE(QFile& srcFile, submap_t& submap) {
   printf("   --- TRE header ---\n");
-  submap.isPseudoNT = false;
 
-  file.seek(submap.parts["TRE"].offset);
+  srcFile.seek(submap.parts["TRE"].offset);
   quint16 size;
-  file.read((char*)&size, sizeof(size));
+  srcFile.read((char*)&size, sizeof(size));
 
-  file.seek(submap.parts["TRE"].offset);
-  file.read((char*)&submap.hdrTRE, size);
+  srcFile.seek(submap.parts["TRE"].offset);
+  srcFile.read((char*)&submap.hdrTRE, size);
 
   submap.hdrTRE.print(submap.parts["TRE"].offset);
 }
 
-void CMap::readRGN(QFile& file, submap_t& submap) {
+void CMap::readRGN(QFile& srcFile, submap_t& submap) {
   printf("   --- RGN header ---\n");
-  submap.isPseudoNT = false;
 
-  file.seek(submap.parts["RGN"].offset);
+  srcFile.seek(submap.parts["RGN"].offset);
   quint16 size;
-  file.read((char*)&size, sizeof(size));
+  srcFile.read((char*)&size, sizeof(size));
 
-  file.seek(submap.parts["RGN"].offset);
-  file.read((char*)&submap.hdrRGN, size);
+  srcFile.seek(submap.parts["RGN"].offset);
+  srcFile.read((char*)&submap.hdrRGN, size);
 
   submap.hdrRGN.print(submap.parts["RGN"].offset);
 }
 
-void CMap::readLBL(QFile& file, submap_t& submap) {
+void CMap::readLBL(QFile& srcFile, submap_t& submap) {
   printf("   --- LBL header ---\n");
-  submap.isPseudoNT = false;
 
-  file.seek(submap.parts["LBL"].offset);
+  srcFile.seek(submap.parts["LBL"].offset);
   quint16 size;
-  file.read((char*)&size, sizeof(size));
+  srcFile.read((char*)&size, sizeof(size));
 
-  file.seek(submap.parts["LBL"].offset);
-  file.read((char*)&submap.hdrLBL, size);
+  srcFile.seek(submap.parts["LBL"].offset);
+  srcFile.read((char*)&submap.hdrLBL, size);
 
   submap.hdrLBL.print(submap.parts["LBL"].offset);
 }
 
-void CMap::readMPS(QFile& file, submap_t& submap) {
+void CMap::readMPS(QFile& srcFile, submap_t& submap) {
   print("--- Map Info ---\n");
-  file.seek(submap.parts["MPS"].offset);
+  srcFile.seek(submap.parts["MPS"].offset);
 
-  QDataStream stream(&file);
+  QDataStream stream(&srcFile);
   stream.setByteOrder(QDataStream::LittleEndian);
 
   quint8 type;
@@ -2109,34 +2097,60 @@ void CMap::readMapInfo(QDataStream& stream) {
         mapId);
 }
 
-void CMap::readGMP(QFile& file, submap_t& submap) {
-  submap.isPseudoNT = true;
-  file.seek(submap.parts["GMP"].offset);
+void CMap::readGMP(QFile& srcFile, submap_t& submap) {
+  srcFile.seek(submap.parts["GMP"].offset);
 
-  print("--- GMP Header %s (%08X)---\n", submap.name.toLatin1().data(), (quint32)file.pos());
+  print("--- GMP Header %s (%08X)---\n", submap.name.toLatin1().data(), (quint32)srcFile.pos());
 
   gmp_hdr_t hdr;
-  file.read((char*)&hdr, sizeof(hdr));
+  srcFile.read((char*)&hdr, sizeof(hdr));
   hdr.print();
-  QString copyright(file.readLine());
+  QString copyright(srcFile.readLine());
+
+  // quint32 lastOffset = 0;
+  quint32 newOffset = 0;
+  QString lastPart;
+  // quint32 totalSize = 0;
 
   if (hdr.offsetTRE) {
     printf("   --- TRE header ---\n");
-    file.seek(submap.parts["GMP"].offset + hdr.offsetTRE);
-    file.read((char*)&submap.hdrTRE, sizeof(submap.hdrTRE));
+    srcFile.seek(submap.parts["GMP"].offset + hdr.offsetTRE);
+    srcFile.read((char*)&submap.hdrTRE, sizeof(submap.hdrTRE));
     submap.hdrTRE.print(submap.parts["GMP"].offset);
+
+    newOffset = submap.parts["GMP"].offset + hdr.offsetTRE;
+    submap.parts["TRE"].offset = newOffset;
+    // // submap.parts["TRE"].size = 0;
+    lastPart = "TRE";
+    // lastOffset = newOffset;
   }
+
   if (hdr.offsetRGN) {
     printf("   --- RGN header ---\n");
-    file.seek(submap.parts["GMP"].offset + hdr.offsetRGN);
-    file.read((char*)&submap.hdrRGN, sizeof(submap.hdrRGN));
+    srcFile.seek(submap.parts["GMP"].offset + hdr.offsetRGN);
+    srcFile.read((char*)&submap.hdrRGN, sizeof(submap.hdrRGN));
     submap.hdrRGN.print(submap.parts["GMP"].offset);
+
+    newOffset = submap.parts["GMP"].offset + hdr.offsetRGN;
+    submap.parts["RGN"].offset = newOffset;
+    // submap.parts[lastPart].size = newOffset - lastOffset;
+    // totalSize += submap.parts[lastPart].size;
+    lastPart = "RGN";
+    // lastOffset = newOffset;
   }
+
   if (hdr.offsetLBL) {
     printf("   --- LBL header ---\n");
-    file.seek(submap.parts["GMP"].offset + hdr.offsetLBL);
-    file.read((char*)&submap.hdrLBL, sizeof(submap.hdrLBL));
+    srcFile.seek(submap.parts["GMP"].offset + hdr.offsetLBL);
+    srcFile.read((char*)&submap.hdrLBL, sizeof(submap.hdrLBL));
     submap.hdrLBL.print(submap.parts["GMP"].offset);
+
+    newOffset = submap.parts["GMP"].offset + hdr.offsetLBL;
+    submap.parts["LBL"].offset = newOffset;
+    // submap.parts[lastPart].size = newOffset - lastOffset;
+    // totalSize += submap.parts[lastPart].size;
+    lastPart = "LBL";
+    // lastOffset = newOffset;
 
     // Запис в бинарен файл:
     /*
@@ -2243,75 +2257,92 @@ void CMap::readGMP(QFile& file, submap_t& submap) {
     }
     */
   }
-  if (hdr.offsetNOD) {
-    printf("   --- NOD header ---\n");
-    file.seek(submap.parts["GMP"].offset + hdr.offsetNOD);
-    file.read((char*)&submap.hdrNOD, sizeof(submap.hdrNOD));
-    submap.hdrNOD.print();
-  }
+
   if (hdr.offsetNET) {
     printf("   --- NET header ---\n");
-    file.seek(submap.parts["GMP"].offset + hdr.offsetNET);
-    file.read((char*)&submap.hdrNET, sizeof(submap.hdrNET));
+    srcFile.seek(submap.parts["GMP"].offset + hdr.offsetNET);
+    srcFile.read((char*)&submap.hdrNET, sizeof(submap.hdrNET));
     submap.hdrNET.print();
+
+    newOffset = submap.parts["GMP"].offset + hdr.offsetNET;
+    submap.parts["NET"].offset = newOffset;
+    // submap.parts[lastPart].size = newOffset - lastOffset;
+    // totalSize += submap.parts[lastPart].size;
+    lastPart = "NET";
+    // lastOffset = newOffset;
   }
+
+  if (hdr.offsetNOD) {
+    printf("   --- NOD header ---\n");
+    srcFile.seek(submap.parts["GMP"].offset + hdr.offsetNOD);
+    srcFile.read((char*)&submap.hdrNOD, sizeof(submap.hdrNOD));
+    submap.hdrNOD.print();
+
+    newOffset = submap.parts["GMP"].offset + hdr.offsetNOD;
+    submap.parts["NOD"].offset = newOffset;
+    // submap.parts[lastPart].size = newOffset - lastOffset;
+    // totalSize += submap.parts[lastPart].size;
+    lastPart = "NOD";
+    // lastOffset = newOffset;
+  }
+
   if (hdr.offsetDEM) {
     printf("   --- DEM header ---\n");
-    file.seek(submap.parts["GMP"].offset + hdr.offsetDEM);
-    file.read((char*)&submap.hdrDEM, sizeof(submap.hdrDEM));
+    srcFile.seek(submap.parts["GMP"].offset + hdr.offsetDEM);
+    srcFile.read((char*)&submap.hdrDEM, sizeof(submap.hdrDEM));
     submap.hdrDEM.print(submap.parts["GMP"].offset);
+
+    newOffset = submap.parts["GMP"].offset + hdr.offsetDEM;
+    submap.parts["DEM"].offset = newOffset;
+    // submap.parts[lastPart].size = newOffset - lastOffset;
+    // totalSize += submap.parts[lastPart].size;
+    lastPart = "DEM";
+    // lastOffset = newOffset;
+  }
+
+  // submap.parts[lastPart].size = submap.parts["GMP"].offset + submap.parts["GMP"].size - lastOffset;
+  // submap.parts[lastPart].size = submap.parts["GMP"].size - totalSize;
+
+  qDebug() << "---- Parts ----";
+  for (const auto& [subfile, part] : submap.parts.asKeyValueRange()) {
+    qDebug().noquote() << "submap:" << submap.name << "subfile:" << subfile << Qt::hex << part.offset << part.size;
   }
 }
 
-void CMap::readSubmaps(QFile& file) {
+void CMap::readSubmaps(QFile& srcFile) {
   maparea = QRectF();
+  qDebug() << "submaps:" << submaps.size();
   for (auto& submap : submaps) {
     if (submap.isPseudoNT) {
-      readGMP(file, submap);
+      readGMP(srcFile, submap);
 
-      readMapLevels(file, submap);
-      readSubdivInfo(file, submap);
-      readSubdivInfoExt(file, submap);
-      readTre8(file, submap);
-
-      for (const subdiv_t& subdiv : submap.subdivs) {
-        // subdiv.print();
-        subdiv.printLite();
-      }
-
-      readStringTableOld(file, submap);
     } else {
       if (!(submap.parts.contains("TRE") && submap.parts.contains("RGN"))) {
-        throw CException("Missing mandatory submap parts.");
+        // throw CException(QString("Missing mandatory submap parts: %1 %2 %3").arg(submap.name).arg(submap.parts.contains("TRE")).arg(submap.parts.contains("RGN")));
+        // skip system subfiles with no road data
+        continue;
       }
-      readMPS(file, submap);
-      readTRE(file, submap);
-      readRGN(file, submap);
-      readLBL(file, submap);
-
-      readMapLevels(file, submap);
-      readSubdivInfo(file, submap);
-      readSubdivInfoExt(file, submap);
-      readTre8(file, submap);
-
-      qDebug() << "Total subdivs count:" << submap.subdivs.size();
-      for (const subdiv_t& subdiv : submap.subdivs) {
-        // subdiv.print();
-        subdiv.printLite();
-      }
-
-      readStringTableOld(file, submap);
+      readMPS(srcFile, submap);
+      readTRE(srcFile, submap);
+      readRGN(srcFile, submap);
+      readLBL(srcFile, submap);
     }
+
+    readMapLevels(srcFile, submap);
+    readSubdivInfo(srcFile, submap);
+    readSubdivInfoExt(srcFile, submap);
+    readTre8(srcFile, submap);
+    readStringTableOld(srcFile, submap);
 
     fflush(stdout);
     fflush(stderr);
   }
 }
 
-void CMap::readMapLevels(QFile& file, submap_t& submap) {
+void CMap::readMapLevels(QFile& srcFile, submap_t& submap) {
   // read map levels from TRE1
-  file.seek(submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre1_offset);
-  QByteArray bufMapLevels = file.read(submap.hdrTRE.tre1_size);
+  srcFile.seek(submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre1_offset);
+  QByteArray bufMapLevels = srcFile.read(submap.hdrTRE.tre1_size);
 
   if (submap.hdrTRE.flag & 0x80) {
     minno(&submap.hdrTRE, bufMapLevels);
@@ -2339,17 +2370,18 @@ void CMap::readMapLevels(QFile& file, submap_t& submap) {
 
   submap.nSubdivsNext = nSubdivs - nSubdivsLast;
   // resize number of sub-divisions
+  qDebug() << "nSubdivs:" << nSubdivs;
   submap.subdivs.resize(nSubdivs);
 }
 
-CMap::tre_0_t CMap::readCopyrights(QFile& file, quint32 baseOffset, quint32 limitOffset) {
+CMap::tre_0_t CMap::readCopyrights(QFile& srcFile, quint32 baseOffset, quint32 limitOffset) {
   tre_0_t result;
 
   quint32 size = limitOffset - baseOffset;
   QByteArray buf(size, 0);
 
-  file.seek(baseOffset);
-  if (file.read(buf.data(), size) != size) {
+  srcFile.seek(baseOffset);
+  if (srcFile.read(buf.data(), size) != size) {
     qWarning() << "Failed to read copyright block!";
     return result;
   }
@@ -2391,16 +2423,16 @@ void CMap::readSubmapArea(submap_t& submap) {
   }
 }
 
-void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
+void CMap::readSubdivInfo(QFile& srcFile, submap_t& submap) {
   quint32 start = submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.size;
   quint32 end = submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre2_offset;
   if (end > start) {
-    auto crh = readCopyrights(file, start, end);
+    auto crh = readCopyrights(srcFile, start, end);
     copyrightsStr = QString("%1|%2").arg(crh.descr1).arg(crh.descr2);
   }
 
-  file.seek(submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre2_offset);
-  QByteArray tre2 = file.read(submap.hdrTRE.tre2_size);
+  srcFile.seek(submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre2_offset);
+  QByteArray tre2 = srcFile.read(submap.hdrTRE.tre2_size);
 
   tre_2_next_t* pTre2N = (tre_2_next_t*)tre2.data();
 
@@ -2421,7 +2453,6 @@ void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
     qint32 width, height;
 
     subdiv->maplevel = &submap.mapLevels[mapLevelIdx];
-    // subdiv->n = l + 1;  // start from 1 or 0?
     subdiv->n = i;
     subdiv->next = pTre2N->next;
     subdiv->terminate = TRE_SUBDIV_TERM(pTre2N);
@@ -2433,7 +2464,6 @@ void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
     } else {
       subdiv_prev->rgn_end = 0;
     }
-    qDebug() << "DEBUG SUBDIV OFFSETS1:" << subdiv->n << Qt::hex << subdiv->rgn_start << subdiv_prev->rgn_end << rgnoff;
 
     subdiv->hasPoints = pTre2N->elements & 0x10;
     subdiv->hasPois = pTre2N->elements & 0x20;
@@ -2464,13 +2494,6 @@ void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
 
     subdiv->area = QRectF(QPointF(subdiv->west, subdiv->north), QPointF(subdiv->east, subdiv->south));
 
-    // subdiv->offsetPoints2 = 0;
-    // subdiv->lengthPoints2 = 0;
-    // subdiv->offsetPolylines2 = 0;
-    // subdiv->lengthPolylines2 = 0;
-    // subdiv->offsetPolygons2 = 0;
-    // subdiv->lengthPolygons2 = 0;
-
     subdiv_prev = subdiv;
     ++pTre2N;
     ++subdiv;
@@ -2478,6 +2501,7 @@ void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
 
   // the subdivisions of the last zoom level do not have a `next` field
   quint32 nSubdivs = submap.subdivs.size();
+  qDebug() << "nSubdivs:" << nSubdivs;
   ++mapLevelIdx;
   // witch pointer to 14 byte subdivision sections
   tre_2_t* pTre2L = pTre2N;
@@ -2486,7 +2510,6 @@ void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
     qint32 cx, cy;
     qint32 width, height;
     subdiv->maplevel = &submap.mapLevels[mapLevelIdx];
-    // subdiv->n = l + 1;
     subdiv->n = i;
     subdiv->next = 0;
     subdiv->terminate = TRE_SUBDIV_TERM(pTre2L);
@@ -2494,8 +2517,6 @@ void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
     subdiv->rgn_start += rgnoff;
 
     subdiv_prev->rgn_end = subdiv->rgn_start;
-    // qDebug() << "DEBUG SUBDIV OFFSETS2:" << subdiv->n << Qt::hex << subdiv->rgn_start <<
-    // subdiv_prev->rgn_end << rgnoff;
 
     subdiv->hasPoints = pTre2L->elements & 0x10;
     subdiv->hasPois = pTre2L->elements & 0x20;
@@ -2519,13 +2540,6 @@ void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
 
     subdiv->area = QRectF(QPointF(subdiv->west, subdiv->north), QPointF(subdiv->east, subdiv->south));
 
-    // subdiv->offsetPoints2 = 0;
-    // subdiv->lengthPoints2 = 0;
-    // subdiv->offsetPolylines2 = 0;
-    // subdiv->lengthPolylines2 = 0;
-    // subdiv->offsetPolygons2 = 0;
-    // subdiv->lengthPolygons2 = 0;
-
     subdiv_prev = subdiv;
     ++pTre2L;
     ++subdiv;
@@ -2535,7 +2549,7 @@ void CMap::readSubdivInfo(QFile& file, submap_t& submap) {
 }
 
 // read extended type elements
-void CMap::readSubdivInfoExt(QFile& file, submap_t& submap) {
+void CMap::readSubdivInfoExt(QFile& srcFile, submap_t& submap) {
   const quint16 rec_size = submap.hdrTRE.tre7_rec_size;
   const quint32 blockStart = submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre7_offset;
 
@@ -2549,8 +2563,8 @@ void CMap::readSubdivInfoExt(QFile& file, submap_t& submap) {
   QVector<subdiv_t>::iterator subdiv = submap.subdivs.begin();
   QVector<subdiv_t>::iterator subdiv_prev = submap.subdivs.end();
   if (submap.hdrTRE.size >= 0x9A && submap.hdrTRE.tre7_size && rec_size >= sizeof(tre_7_t)) {
-    file.seek(blockStart);
-    QByteArray subdiv2 = file.read(submap.hdrTRE.tre7_size);
+    srcFile.seek(blockStart);
+    QByteArray subdiv2 = srcFile.read(submap.hdrTRE.tre7_size);
     tre_7_t* pSubDiv2 = (tre_7_t*)subdiv2.data();
 
     bool skipPois = (rec_size != sizeof(tre_7_t));
@@ -2586,11 +2600,11 @@ void CMap::readSubdivInfoExt(QFile& file, submap_t& submap) {
 }
 
 // extended types
-void CMap::readTre8(QFile& file, submap_t& submap) {
+void CMap::readTre8(QFile& srcFile, submap_t& submap) {
   print("--- overview ---\n");
   // read extended elements' offsets and sizes
-  file.seek(submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre8_offset);
-  QDataStream stream(&file);
+  srcFile.seek(submap.parts[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre8_offset);
+  QDataStream stream(&srcFile);
   stream.setByteOrder(QDataStream::LittleEndian);
 
   const int N = submap.hdrTRE.tre8_size / submap.hdrTRE.tre8_rec_size;
@@ -2601,10 +2615,10 @@ void CMap::readTre8(QFile& file, submap_t& submap) {
   }
 }
 
-void CMap::readStringTableOld(QFile& file, submap_t& submap) {
+void CMap::readStringTableOld(QFile& srcFile, submap_t& submap) {
   if (submap.parts.contains("LBL")) {
-    file.seek(submap.parts["LBL"].offset);
-    QByteArray lblhdr = file.read(sizeof(hdr_lbl_t));
+    srcFile.seek(submap.parts["LBL"].offset);
+    QByteArray lblhdr = srcFile.read(sizeof(hdr_lbl_t));
     hdr_lbl_t* pLblHdr = (hdr_lbl_t*)lblhdr.data();
 
     quint32 offsetLbl1 = submap.parts["LBL"].offset + gar_load(quint32, pLblHdr->lbl1_offset);
@@ -2614,8 +2628,8 @@ void CMap::readStringTableOld(QFile& file, submap_t& submap) {
     quint32 offsetNet1 = 0;
     hdr_net_t* pNetHdr = nullptr;
     if (submap.parts.contains("NET")) {
-      file.seek(submap.parts["NET"].offset);
-      nethdr = file.read(sizeof(hdr_net_t));
+      srcFile.seek(submap.parts["NET"].offset);
+      nethdr = srcFile.read(sizeof(hdr_net_t));
       pNetHdr = (hdr_net_t*)nethdr.data();
       offsetNet1 = submap.parts["NET"].offset + gar_load(quint32, pNetHdr->net1_offset);
     }
@@ -2628,8 +2642,6 @@ void CMap::readStringTableOld(QFile& file, submap_t& submap) {
     if (codepage > 0) {
       codepageStr = QString("%1").arg(codepage);
     }
-
-    // qDebug() << file.fileName() << Qt::hex << offsetLbl1 << offsetLbl6 << offsetNet1;
 
     QObject* obj = qobject_cast<QObject*>(this);
     switch (pLblHdr->coding) {
@@ -2661,7 +2673,7 @@ void CMap::readStringTableOld(QFile& file, submap_t& submap) {
   }
 }
 
-void CMap::readStringTable(QFile& file, submap_t& submap) {
+void CMap::readStringTable(QFile& srcFile, submap_t& submap) {
   quint32 offsetLbl1 = submap.parts[submap.isPseudoNT ? "GMP" : "LBL"].offset + submap.hdrLBL.lbl1_offset;
   quint32 offsetLbl6 = submap.parts[submap.isPseudoNT ? "GMP" : "LBL"].offset + submap.hdrLBL.lbl6_offset;
 
@@ -2695,8 +2707,8 @@ void CMap::readStringTable(QFile& file, submap_t& submap) {
   }
 }
 
-void CMap::readShapes() {
-  printHeader();
+const bool isSplit = false;
+void CMap::readShapes(QFile& srcFile) {
   // int numThreads = 2;
 
   int numThreads = 1;
@@ -2705,50 +2717,101 @@ void CMap::readShapes() {
   }
   qDebug() << "Sub maps count:" << submaps.size();
 
+  bool isFirst = true;
+  QFile dstFile;
+  uint8_t filePart = 0;
   for (const submap_t& submap : submaps) {
-    qDebug() << "Sub map:" << submap.name << " Subdivs count : " << submap.subdivs.size();
+    qDebug() << "Sub map:" << submap.name << " Subdivs count : " << submap.subdivs.size() << submap.isPseudoNT;
     if (submap.subdivs.isEmpty()) {
       continue;
     }
 
-    // @todo: auto submap = getSubmap("RGN");
+    QString fileName = isSplit ? QString("%1.%2.mp").arg(outputFile).arg(submap.name) : outputFile;
+    if (dstFile.isOpen()) {
+      QFileInfo fi(dstFile);
+      const bool isOversize = fi.size() > 1000 * 1000 * 1000;
+      if (isOversize) {
+        ++filePart;
+        fileName = QString("%1.part%2.mp").arg(outputFile).arg(filePart + 1);
+      }
+      if (isSplit || isOversize) {
+        dstFile.flush();
+        dstFile.close();
+        dstFile.setFileName(fileName);
+        if (!dstFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+          throw CException("Error opening output file: " + dstFile.errorString());
+        }
+        writeHeader(dstFile, submap);
+
+        if (isOversize && filePart == 1) {
+          const QString firstPartName = QString("%1.part1.mp").arg(outputFile);
+          if (QFile::exists(firstPartName)) {
+            QFile::remove(firstPartName);
+          }
+          QFile::rename(outputFile, firstPartName);
+        }
+      }
+    } else {
+      dstFile.setFileName(fileName);
+      if (!dstFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        throw CException("Error opening output file: " + dstFile.errorString());
+      }
+      if (isSplit) {
+        writeHeader(dstFile, submap);
+      } else if (isFirst) {
+        isFirst = false;
+        writeHeader(dstFile, submap);
+      }
+    }
 
     if (numThreads == 1) {
-      processShapes(submap);
+      processShapes(dstFile, srcFile, submap);
     } else {
-      CSubmapTask* task = new CSubmapTask([this, &submap]() { processShapes(submap); });
+      CSubmapTask* task = new CSubmapTask([this, &dstFile, &srcFile, &submap]() { processShapes(dstFile, srcFile, submap); });
       QThreadPool::globalInstance()->start(task);
     }
   }
 
   QThreadPool::globalInstance()->waitForDone();
+
+  if (dstFile.isOpen()) {
+    dstFile.flush();
+    dstFile.close();
+  }
 }
 
-void CMap::processShapes(const submap_t& submap) {
-  QFile file(inputFile);
-  if (!file.open(QIODevice::ReadOnly)) {
-    throw CException("failed to open file: " + inputFile);
-  }
-
+void CMap::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap) {
   try {
-    file.seek(submap.parts["RGN"].offset);
-    QByteArray rgndata = file.read(submap.parts["RGN"].size);
+    // QByteArray rgndata;
+    // file.seek(submap.parts["RGN"].offset);
+    // rgndata = file.read(submap.hdrLBL.size);
+
+    // file.seek(submap.hdrTRE.tre7_offset + submap.hdrTRE.tre7_size + 1);
+    // rgndata += file.read(submap.hdrLBL.lbl1_offset - submap.hdrRGN.offset_point2 + submap.hdrRGN.length_point2);
+
+    srcFile.seek(submap.parts["RGN"].offset);
+    QByteArray rgndata = srcFile.read(submap.parts["RGN"].size);
+    // file.seek(submap.parts["GMP"].offset);
+    // QByteArray rgndata = file.read(submap.parts["GMP"].size);
+
+    // qDebug() << "AAAAA1 offsets" << submap.name << Qt::hex << submap.parts["GMP"].offset << submap.parts["RGN"].offset << submap.parts["RGN"].size;
 
     if (rgndata.size() == 0) {
+      qDebug() << "No RGN data";
       return;
+    } else {
+      qDebug() << "RGN subfile size:" << Qt::hex << rgndata.size();
     }
 
     for (const subdiv_t& subdiv : submap.subdivs) {
-      decodeRgn(file, subdiv, submap.strtbl, rgndata);
+      decodeRgn(dstFile, srcFile, subdiv, submap.strtbl, rgndata);
     }
   } catch (const CException& e) {
     qDebug() << "Fatal error:" << e.msg;
   }
-
-  file.close();
 }
 
-void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata) {
+void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata) {
   if (subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 && !subdiv.lengthPoints2) {
     return;
   }
@@ -2757,6 +2820,8 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
   polytype_t polylines;
   pointtype_t points;
   pointtype_t pois;
+
+  // qDebug() << "DEBUG subdiv:" << subdiv.n << subdiv.level;
 
   const quint8* pRawData = (quint8*)rgndata.data();
 
@@ -2817,7 +2882,7 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
       pData += pt.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
 
       if (strtbl) {
-        pt.isLbl6 ? strtbl->get(file, pt.lbl_ptr, IGarminStrTbl::poi, pt.labels) : strtbl->get(file, pt.lbl_ptr, IGarminStrTbl::norm, pt.labels);
+        pt.isLbl6 ? strtbl->get(srcFile, pt.lbl_ptr, IGarminStrTbl::poi, pt.labels) : strtbl->get(srcFile, pt.lbl_ptr, IGarminStrTbl::norm, pt.labels);
       }
 
       points.push_back(pt);
@@ -2833,7 +2898,7 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
       pData += po.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData);
 
       if (strtbl) {
-        po.isLbl6 ? strtbl->get(file, po.lbl_ptr, IGarminStrTbl::poi, po.labels) : strtbl->get(file, po.lbl_ptr, IGarminStrTbl::norm, po.labels);
+        po.isLbl6 ? strtbl->get(srcFile, po.lbl_ptr, IGarminStrTbl::poi, po.labels) : strtbl->get(srcFile, po.lbl_ptr, IGarminStrTbl::norm, po.labels);
       }
 
       pois.push_back(po);
@@ -2849,9 +2914,9 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
       pData += ln.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd);
 
       if (strtbl && !ln.lbl_in_NET && ln.lbl_info) {
-        strtbl->get(file, ln.lbl_info, IGarminStrTbl::norm, ln.labels);
+        strtbl->get(srcFile, ln.lbl_info, IGarminStrTbl::norm, ln.labels);
       } else if (strtbl && ln.lbl_in_NET && ln.lbl_info) {
-        strtbl->get(file, ln.lbl_info, IGarminStrTbl::net, ln.labels);
+        strtbl->get(srcFile, ln.lbl_info, IGarminStrTbl::net, ln.labels);
       }
 
       polylines.push_back(ln);
@@ -2867,9 +2932,9 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
       pData += pg.decode(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
 
       if (strtbl && !pg.lbl_in_NET && pg.lbl_info) {
-        strtbl->get(file, pg.lbl_info, IGarminStrTbl::norm, pg.labels);
+        strtbl->get(srcFile, pg.lbl_info, IGarminStrTbl::norm, pg.labels);
       } else if (strtbl && pg.lbl_in_NET && pg.lbl_info) {
-        strtbl->get(file, pg.lbl_info, IGarminStrTbl::net, pg.labels);
+        strtbl->get(srcFile, pg.lbl_info, IGarminStrTbl::net, pg.labels);
       }
 
       polygons.push_back(pg);
@@ -2887,7 +2952,7 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
       pData += pg.decodeExt(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, false, pData, pEnd);
 
       if (strtbl && !pg.lbl_in_NET && pg.lbl_info) {
-        strtbl->get(file, pg.lbl_info, IGarminStrTbl::norm, pg.labels);
+        strtbl->get(srcFile, pg.lbl_info, IGarminStrTbl::norm, pg.labels);
       }
 
       polygons.push_back(pg);
@@ -2904,7 +2969,7 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
       pData += ln.decodeExt(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, true, pData, pEnd);
 
       if (strtbl && !ln.lbl_in_NET && ln.lbl_info) {
-        strtbl->get(file, ln.lbl_info, IGarminStrTbl::norm, ln.labels);
+        strtbl->get(srcFile, ln.lbl_info, IGarminStrTbl::norm, ln.labels);
       }
 
       polylines.push_back(ln);
@@ -2925,7 +2990,7 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
       pData += pt.decodeExt(subdiv.iCenterLng, subdiv.iCenterLat, subdiv.shift, pData, pEnd);
 
       if (strtbl) {
-        pt.isLbl6 ? strtbl->get(file, pt.lbl_ptr, IGarminStrTbl::poi, pt.labels) : strtbl->get(file, pt.lbl_ptr, IGarminStrTbl::norm, pt.labels);
+        pt.isLbl6 ? strtbl->get(srcFile, pt.lbl_ptr, IGarminStrTbl::poi, pt.labels) : strtbl->get(srcFile, pt.lbl_ptr, IGarminStrTbl::norm, pt.labels);
       }
 
       pois.push_back(pt);
@@ -2934,10 +2999,10 @@ void CMap::decodeRgn(QFile& file, const subdiv_t& subdiv, IGarminStrTbl* strtbl,
 
   // qDebug() << "OPA" << subdiv.level << subdiv.n << polygons.length() << polylines.length() << pois.length() << points.length();
 
-  writeMp(polylines, polygons, points, pois, subdiv.level);
+  writeMp(dstFile, polylines, polygons, points, pois, subdiv.level);
 }
 
-void CMap::writeMp(polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level) {
+void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level) {
   // qDebug() << "Stats - pt:" << points.length() << "po:" << pois.length() << "pl:" <<
   // polylines.length()
   //          << "pg:" << polygons.length();
@@ -2976,8 +3041,8 @@ void CMap::writeMp(polytype_t& polylines, polytype_t& polygons, pointtype_t& poi
     }
     tmpPoints += "[END]\n\n";
 
-    of.write(codec->fromUnicode(tmpPoints));
-    of.flush();
+    dstFile.write(codec->fromUnicode(tmpPoints));
+    dstFile.flush();
   }
 
   count = 0;
@@ -3014,8 +3079,8 @@ void CMap::writeMp(polytype_t& polylines, polytype_t& polygons, pointtype_t& poi
     }
     tmpPois += "[END]\n\n";
 
-    of.write(codec->fromUnicode(tmpPois));
-    of.flush();
+    dstFile.write(codec->fromUnicode(tmpPois));
+    dstFile.flush();
   }
 
   count = 0;
@@ -3070,8 +3135,8 @@ void CMap::writeMp(polytype_t& polylines, polytype_t& polygons, pointtype_t& poi
     tmpPolylines += output + "\n";
     tmpPolylines += "[END]\n\n";
 
-    of.write(codec->fromUnicode(tmpPolylines));
-    of.flush();
+    dstFile.write(codec->fromUnicode(tmpPolylines));
+    dstFile.flush();
   }
 
   count = 0;
@@ -3119,8 +3184,8 @@ void CMap::writeMp(polytype_t& polylines, polytype_t& polygons, pointtype_t& poi
     tmpPolygons += output + "\n";
     tmpPolygons += "[END]\n\n";
 
-    of.write(codec->fromUnicode(tmpPolygons));
-    of.flush();
+    dstFile.write(codec->fromUnicode(tmpPolygons));
+    dstFile.flush();
   }
 }
 
@@ -3305,7 +3370,6 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
 #endif
   }
 
-  // method1Time += timer.nsecsElapsed();
   if (errors.isEmpty()) {
     return QString("Data%1=%2").arg(level).arg(result);
   } else {
@@ -3459,15 +3523,11 @@ QString convLnDegStr(const QPolygonF &polyline, quint32 level, quint32 len, bool
 }
 */
 
-void CMap::printHeader() {
-  bool isFirst = true;
-
+void CMap::writeHeader(QFile& dstFile, const submap_t& submap) {
   QString idStr = "";
   QMap<QString, QString> levelZoom;
   QString zoomsStr = "";
   QString levelsStr = "";
-
-  const submap_t& submap = submaps.first();
 
   for (const auto& ml : submap.mapLevels) {
     levelZoom.insert(QVariant(ml.zoom).toString(), QVariant(ml.bits).toString());
@@ -3510,8 +3570,8 @@ void CMap::printHeader() {
                              .arg(levelsStr)
                              .arg(zoomsStr);
 
-  of.write(codec->fromUnicode(headerStr));
-  of.flush();
+  dstFile.write(codec->fromUnicode(headerStr));
+  dstFile.flush();
 }
 
 int main(int argc, char* argv[]) {
@@ -3520,7 +3580,7 @@ int main(int argc, char* argv[]) {
     QElapsedTimer timerMain;
     timerMain.start();
     CMap cmap(argc, argv);
-    qDebug() << "Main time:" << timerMain.elapsed();
+    qDebug() << "Run time:" << QString::number(timerMain.elapsed() / 1000) << "sec.";
   } catch (const CException& e) {
     fflush(stdout);
     fflush(stderr);
