@@ -1,0 +1,19 @@
+BasedOnStyle: Google        # стабилна основа
+
+IndentWidth: 2            # 4 интервала
+TabWidth: 2
+UseTab: Never             # без табове, само интервали
+ColumnLimit: 180          # максимум 100 символа на ред
+
+BreakBeforeBraces: Attach        # скобите на същия ред (K&R стил)
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+
+IndentCaseLabels: true    # case: да се индентират
+SpaceBeforeParens: ControlStatements  # if (), for (), while (), но не за функции
+PointerAlignment: Right    # int* ptr вместо int *ptr
+AlignConsecutiveDeclarations: false    # подравняване на декларации
+AlignConsecutiveAssignments: false     # подравняване на =
+AlignTrailingComments: true           # коментарите на една колона
+SortIncludes: true        # сортира include редовете 
