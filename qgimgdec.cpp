@@ -37,7 +37,7 @@
 #include <QtCore5Compat/QTextCodec>
 #include <iostream>
 
-// #define SANITY_CHECK
+#define SANITY_CHECK
 #define DEBUG_SHOW_MAPLEVELS
 // #define DEBUG_SHOW_POLY_DATA_SUBDIV
 // #define DEBUG_SHOW_POLY_DATA_DECODE

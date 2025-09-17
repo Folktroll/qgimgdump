@@ -1,0 +1,1 @@
+This project is a fork of [garmin parser of QMapShack](https://github.com/Maproom/qmapshack/tree/dev/src/qmapshack/map/garmin), licensed under GPLv3. Earlier commits were missing license headers by mistake, but the project has always been under GPLv3.
