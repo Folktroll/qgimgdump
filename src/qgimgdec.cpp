@@ -25,7 +25,6 @@
 // #define DEBUG_SHOW_POLY_DATA_SUBDIV
 // #define DEBUG_SHOW_POLY_DATA_DECODE
 // #define DEBUG_SHOW_POLY_DATA_DECODE_EXT
-// #define DEBUG_WRITE_TO_OUTPUT
 
 // 1 garmin unit = 360 / MAX_FLOAT_PREC
 
@@ -711,7 +710,7 @@ void CShiftReg::fill(quint32 b) {
 
 class CGarminPolygon {
  public:
-  CGarminPolygon() : type(0), direction(false), lbl_info(0), lbl_in_NET(false), hasV2Label(false), dLng(0), dLat(0) {}
+  CGarminPolygon() : type(0), direction(false), lbl_info(0), hasNetLabel(false), hasExtLabel(false), dLng(0), dLat(0) {}
   virtual ~CGarminPolygon() = default;
 
   quint32 decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8* pData, const quint8* pEnd);
@@ -722,15 +721,15 @@ class CGarminPolygon {
   quint32 type;
   bool direction;    // direction of line (polyline, only)
   quint32 lbl_info;  // the label offset
-  bool lbl_in_NET;   // true if label offset has to be used in NET section, @todo: missing labels
+  bool hasNetLabel;  // true if label offset has to be used in NET subfile, @todo: missing labels
   QPolygonF points;  // the actual polyline points as longitude / latitude [rad]
   QStringList labels;
-  quint8 hasV2LabelCount = 0;
+  quint8 hasExtLabelCount = 0;
 
  private:
-  bool hasV2Label;  // ext label
-  qint16 dLng;      // delta longitude from subdivision center
-  qint16 dLat;      // delta latitude from subdivision center
+  bool hasExtLabel;  // ext label
+  qint16 dLng;       // delta longitude from subdivision center
+  qint16 dLat;       // delta latitude from subdivision center
   // QVector<double> u;  // the actual polyline points as longitude / latitude [rad]
   // QVector<double> v;  // the actual polyline points as longitude / latitude [rad]
   // inline static qint32 maxVecSize = 0;
@@ -779,12 +778,12 @@ quint32 CGarminPolygon::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shi
   }
 
   /* label info
-      bit 0..21   off set into LBL section
+      bit 0..21   off set into LBL subfile
       bit 22      use extra bit for coordinates
-      bit 23      use label data of NET section
+      bit 23      use label data of NET subfile
    */
   lbl_info = gar_ptr_load(uint24_t, pData);
-  lbl_in_NET = lbl_info & 0x800000;
+  hasNetLabel = lbl_info & 0x800000;
   extra_bit = lbl_info & 0x400000;
   lbl_info = lbl_info & 0x3FFFFF;
 
@@ -919,7 +918,7 @@ quint32 CGarminPolygon::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 
   subtype = *pData++;
 
   type = 0x10000 + (quint16(type) << 8) + (subtype & 0x1f);
-  hasV2Label = subtype & 0x20;
+  hasExtLabel = subtype & 0x20;
   // delta longitude and latitude
   dLng = gar_ptr_load(uint16_t, pData);
   pData += 2;
@@ -991,13 +990,13 @@ quint32 CGarminPolygon::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 
     points << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
   }
 
-  if (hasV2Label) {
-    ++hasV2LabelCount;
+  if (hasExtLabel) {
+    ++hasExtLabelCount;
     quint32 offset = gar_ptr_load(uint24_t, pData + bs_len);
     bytes_total += 3;
     // @todo: read label information
     lbl_info = offset & 0x3FFFFF;
-    // qDebug() << "[WARN] hasV2Label=true" << Qt::hex << offset << lbl_info;
+    // qDebug() << "[INFO] hasExtLabel=true" << Qt::hex << offset << lbl_info;
   } else {
     lbl_info = 0;
   }
@@ -1208,11 +1207,11 @@ class CMap : public QCoreApplication {
     quint8 x0070_0073[4] = {0};          // 0070..0073
     quint32 map_id = 0;                  // 0074..0077
     quint8 x0078_007B[4] = {0};          // 0078..007B
-    quint32 tre7_offset = 0;             // 007C..007F - object groups offset, ext type offsets V2
+    quint32 tre7_offset = 0;             // 007C..007F - extended type offsets
     quint32 tre7_size = 0;               // 0080..0083
     quint16 tre7_rec_size = 0;           // 0084..0085
     quint8 x0086_0089[4] = {0};          // 0086..0089 - 0x01 0x00 0x00 0x00
-    quint32 tre8_offset = 0;             // 008A..008D - ext type overviews; order: pl, pg, poi; sorted by type (1 type 1 levels 1 subtype)
+    quint32 tre8_offset = 0;             // 008A..008D - extended type overview: ln, pg, po; sorted by type (1 type 1 levels 1 subtype)
     quint32 tre8_size = 0;               // 008E..0091
     quint16 tre8_rec_size = 0;           // 0092..0093
     quint16 polyl2_types_num = 0;        // 0094..0095 - num ext type ln
@@ -1348,7 +1347,7 @@ class CMap : public QCoreApplication {
 
   // map subdivision definition, without pointer to the lower level subparts
   struct tre2_t {
-    quint24 rgn_offset;
+    quint24 rgn_offset;  // offset: 27-0 bit, 31-26 elements
     quint8 elements;
     quint24 center_lng;
     quint24 center_lat;
@@ -1449,25 +1448,21 @@ class CMap : public QCoreApplication {
 
   void print(const char* format, ...);
   void readFAT(QFile& srcFile);
-  void readSubmaps(QFile& srcFile);
+  void readIMG(QFile& srcFile, submap_t& submap);
   void readGMP(QFile& srcFile, submap_t& submap);
+  void readSubmaps(QFile& srcFile);
   void readSubmapArea(submap_t& submap);
   void readMapLevels(QFile& srcFile, submap_t& submap);
   tre0_t readCopyrights(QFile& srcFile, quint32 baseOffset, quint32 limitOffset);
   void readSubdivInfo(QFile& srcFile, submap_t& submap);
   void readSubdivInfoExt(QFile& srcFile, submap_t& submap);
   void readStringTable(QFile& srcFile, submap_t& submap);
-  // void readTre8(QFile& srcFile, submap_t& submap);
-  void readMPS(QFile& srcFile, submap_t& submap);
   void readProductInfo(QDataStream& stream);
   void readMapInfo(QDataStream& stream);
   QString readRawString(QDataStream& stream);
-  void readTRE(QFile& srcFile, submap_t& submap);
-  void readRGN(QFile& srcFile, submap_t& submap);
-  void readLBL(QFile& srcFile, submap_t& submap);
   void processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap);
   void readShapes(QFile& srcFile);
-  void decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata);
+  void decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata);
   void writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level);
   QString convPtDegStr(const QPointF& point, quint32 level = -1);
   QString convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine);
@@ -1533,13 +1528,13 @@ class CMap : public QCoreApplication {
   QElapsedTimer timer;
   quint64 method1Time = 0;
   quint64 method2Time = 0;
-  quint8 hasV2LabelCount = 0;
+  quint8 hasExtLabelCount = 0;
   quint8 skipPolygonsOutside = 0;
   quint8 suspiciousSegment = 0;
   quint8 tooManyErrors = 0;
   quint8 tooLongLn = 0;
   quint8 invlType = 0;
-  quint8 lblInNetCount = 0;
+  quint8 hasNetLabelCount = 0;
 };
 
 quint8 invlCoord = 0;
@@ -1748,7 +1743,6 @@ void CMap::hdr_tre_t::print(quint32 offset) {
 
 void CMap::hdr_rgn_t::print(quint32 offset) {
   submap_hdr_t::print();
-  qDebug() << "current offset" << Qt::hex << offset;
   printUInt32("rgn1_offset", rgn1_offset + offset);
   printUInt32("rgn1_length", rgn1_length);
   printUInt32("pg2_offset", pg2_offset + offset);
@@ -1899,7 +1893,7 @@ void CMap::readFAT(QFile& srcFile) {
   srcFile.read((char*)&imghdr, sizeof(gmapsupp_imghdr_t));
   srcFile.seek(imghdr.offsetFAT * 0x200);
 
-  print("---- IMG Header ---- size(%08X)\n", sizeof(gmapsupp_imghdr_t));
+  print("----- IMG Header ----- size(%08X)\n", sizeof(gmapsupp_imghdr_t));
   imghdr.print();
 
   mask = imghdr.xorByte;
@@ -1972,75 +1966,119 @@ void CMap::readFAT(QFile& srcFile) {
   }
 }
 
-void CMap::readTRE(QFile& srcFile, submap_t& submap) {
-  printf("   --- TRE header ---\n");
+void CMap::readIMG(QFile& srcFile, submap_t& submap) {
+  QString subfileName = "TRE";
+  if (submap.subfiles.keys().contains(subfileName)) {
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    quint16 size;
+    srcFile.read((char*)&size, sizeof(size));
 
-  srcFile.seek(submap.subfiles["TRE"].offset);
-  quint16 size;
-  srcFile.read((char*)&size, sizeof(size));
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    srcFile.read((char*)&submap.hdrTRE, size);
 
-  srcFile.seek(submap.subfiles["TRE"].offset);
-  srcFile.read((char*)&submap.hdrTRE, size);
+    printf("   --- %s header ---\n", subfileName.toLatin1().data());
+    submap.hdrTRE.print(submap.subfiles[subfileName].offset);
+  }
 
-  submap.hdrTRE.print(submap.subfiles["TRE"].offset);
-}
+  subfileName = "RGN";
+  if (submap.subfiles.keys().contains(subfileName)) {
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    quint16 size;
+    srcFile.read((char*)&size, sizeof(size));
 
-void CMap::readRGN(QFile& srcFile, submap_t& submap) {
-  printf("   --- RGN header ---\n");
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    srcFile.read((char*)&submap.hdrRGN, size);
 
-  srcFile.seek(submap.subfiles["RGN"].offset);
-  quint16 size;
-  srcFile.read((char*)&size, sizeof(size));
+    printf("   --- %s header ---\n", subfileName.toLatin1().data());
+    submap.hdrRGN.print(submap.subfiles[subfileName].offset);
+  }
 
-  srcFile.seek(submap.subfiles["RGN"].offset);
-  srcFile.read((char*)&submap.hdrRGN, size);
+  subfileName = "LBL";
+  if (submap.subfiles.keys().contains(subfileName)) {
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    quint16 size;
+    srcFile.read((char*)&size, sizeof(size));
 
-  submap.hdrRGN.print(submap.subfiles["RGN"].offset);
-}
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    srcFile.read((char*)&submap.hdrLBL, size);
 
-void CMap::readLBL(QFile& srcFile, submap_t& submap) {
-  printf("   --- LBL header ---\n");
+    printf("   --- %s header ---\n", subfileName.toLatin1().data());
+    submap.hdrLBL.print(submap.subfiles[subfileName].offset);
+  }
 
-  srcFile.seek(submap.subfiles["LBL"].offset);
-  quint16 size;
-  srcFile.read((char*)&size, sizeof(size));
+  subfileName = "NET";
+  if (submap.subfiles.keys().contains(subfileName)) {
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    quint16 size;
+    srcFile.read((char*)&size, sizeof(size));
 
-  srcFile.seek(submap.subfiles["LBL"].offset);
-  srcFile.read((char*)&submap.hdrLBL, size);
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    srcFile.read((char*)&submap.hdrLBL, size);
 
-  submap.hdrLBL.print(submap.subfiles["LBL"].offset);
-}
+    printf("   --- %s header ---\n", subfileName.toLatin1().data());
+    submap.hdrLBL.print(submap.subfiles[subfileName].offset);
+  }
 
-void CMap::readMPS(QFile& srcFile, submap_t& submap) {
-  print("--- Map Info ---\n");
-  srcFile.seek(submap.subfiles["MPS"].offset);
+  subfileName = "NOD";
+  if (submap.subfiles.keys().contains(subfileName)) {
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    quint16 size;
+    srcFile.read((char*)&size, sizeof(size));
 
-  QDataStream stream(&srcFile);
-  stream.setByteOrder(QDataStream::LittleEndian);
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    srcFile.read((char*)&submap.hdrLBL, size);
 
-  quint8 type;
-  quint16 length;
+    printf("   --- %s header ---\n", subfileName.toLatin1().data());
+    submap.hdrLBL.print(submap.subfiles[subfileName].offset);
+  }
 
-  stream >> type >> length;
-  while (type != 0) {
-    switch (type) {
-      case 0x46:
-        readProductInfo(stream);
-        break;
+  subfileName = "DEM";
+  if (submap.subfiles.keys().contains(subfileName)) {
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    quint16 size;
+    srcFile.read((char*)&size, sizeof(size));
 
-      case 0x4c:
-        readMapInfo(stream);
-        break;
+    srcFile.seek(submap.subfiles[subfileName].offset);
+    srcFile.read((char*)&submap.hdrLBL, size);
 
-      default:
-        stream.skipRawData(length);
-    }
+    printf("   --- %s header ---\n", subfileName.toLatin1().data());
+    submap.hdrLBL.print(submap.subfiles[subfileName].offset);
+  }
+
+  subfileName = "MPS";
+  if (submap.subfiles.keys().contains(subfileName)) {
+    print("--- Map Info ---\n");
+    srcFile.seek(submap.subfiles[subfileName].offset);
+
+    QDataStream stream(&srcFile);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    quint8 type;
+    quint16 length;
 
     stream >> type >> length;
+    while (type != 0) {
+      switch (type) {
+        case 0x46:
+          readProductInfo(stream);
+          break;
+
+        case 0x4c:
+          readMapInfo(stream);
+          break;
+
+        default:
+          stream.skipRawData(length);
+      }
+
+      stream >> type >> length;
+    }
   }
 }
+
 void CMap::readGMP(QFile& srcFile, submap_t& submap) {
-  srcFile.seek(submap.subfiles["GMP"].offset);
+  const QString gmpSubfileName = "GMP";
+  srcFile.seek(submap.subfiles[gmpSubfileName].offset);
 
   gmp_hdr_t hdr;
   srcFile.read((char*)&hdr, sizeof(hdr));
@@ -2048,9 +2086,8 @@ void CMap::readGMP(QFile& srcFile, submap_t& submap) {
 
   QString subfileName;
   QString prevPartName;
-  const QString gmpName = "GMP";
 
-  const quint32 gmpOffset = submap.subfiles[gmpName].offset;
+  const quint32 gmpOffset = submap.subfiles[gmpSubfileName].offset;
   print("--- GMP Header %s (%08X)---\n", submap.name.toLatin1().data(), gmpOffset);
   hdr.print();
 
@@ -2232,7 +2269,7 @@ void CMap::readGMP(QFile& srcFile, submap_t& submap) {
     prevPartName = subfileName;
   }
 
-  submap.subfiles[prevPartName].bodySize = submap.subfiles["GMP"].offset + submap.subfiles["GMP"].size - submap.subfiles[prevPartName].bodyOffset;
+  submap.subfiles[prevPartName].bodySize = submap.subfiles[gmpSubfileName].offset + submap.subfiles[gmpSubfileName].size - submap.subfiles[prevPartName].bodyOffset;
 }
 
 QString CMap::readRawString(QDataStream& stream) {
@@ -2285,16 +2322,12 @@ void CMap::readSubmaps(QFile& srcFile) {
         // skip system subfiles with no road data
         continue;
       }
-      readMPS(srcFile, submap);
-      readTRE(srcFile, submap);
-      readRGN(srcFile, submap);
-      readLBL(srcFile, submap);
+      readIMG(srcFile, submap);
     }
 
     readMapLevels(srcFile, submap);
     readSubdivInfo(srcFile, submap);
     readSubdivInfoExt(srcFile, submap);
-    // readTre8(srcFile, submap);
     readStringTable(srcFile, submap);
   }
 
@@ -2426,7 +2459,7 @@ void CMap::readSubdivInfo(QFile& srcFile, submap_t& submap) {
     subdiv->n = i;
     subdiv->next = pTre2N->next;
     subdiv->terminate = TRE_SUBDIV_TERM(pTre2N);
-    subdiv->rgn_start = pTre2N->rgn_offset[0] | pTre2N->rgn_offset[1] << 8 | pTre2N->rgn_offset[2] << 16;
+    subdiv->rgn_start = pTre2N->rgn_offset[0] | pTre2N->rgn_offset[1] << 8 | pTre2N->rgn_offset[2] << 16 | (pTre2N->elements & 0x0F) << 24;
     subdiv->rgn_start += rgnoff;
     // skip if this is the first entry
     if (subdiv_prev != submap.subdivs.end()) {
@@ -2483,7 +2516,7 @@ void CMap::readSubdivInfo(QFile& srcFile, submap_t& submap) {
     subdiv->n = i;
     subdiv->next = 0;
     subdiv->terminate = TRE_SUBDIV_TERM(pTre2L);
-    subdiv->rgn_start = pTre2L->rgn_offset[0] | pTre2L->rgn_offset[1] << 8 | pTre2L->rgn_offset[2] << 16;
+    subdiv->rgn_start = pTre2L->rgn_offset[0] | pTre2L->rgn_offset[1] << 8 | pTre2L->rgn_offset[2] << 16 | (pTre2L->elements & 0x0F) << 24;
     subdiv->rgn_start += rgnoff;
 
     subdiv_prev->rgn_end = subdiv->rgn_start;
@@ -2573,22 +2606,6 @@ void CMap::readSubdivInfoExt(QFile& srcFile, submap_t& submap) {
   }
 }
 
-// extended types
-// void CMap::readTre8(QFile& srcFile, submap_t& submap) {
-//   print("--- overview ---\n");
-//   // read extended elements' offsets and sizes
-//   srcFile.seek(submap.subfiles[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre8_offset);
-//   QDataStream stream(&srcFile);
-//   stream.setByteOrder(QDataStream::LittleEndian);
-
-//   const int N = submap.hdrTRE.tre8_size / submap.hdrTRE.tre8_rec_size;
-//   for (int n = 0; n < N; n++) {
-//     quint8 type, maxlevel, subtype;
-//     stream >> type >> maxlevel >> subtype;
-//     // print("type: %02X subtype: %02X maxlevel: %i %i\n", type, subtype, maxlevel, (0x10000 | (quint32(type) << 8) | (quint32(subtype))));
-//   }
-// }
-
 void CMap::readStringTable(QFile& srcFile, submap_t& submap) {
   quint32 offsetLbl1 = submap.subfiles[submap.isPseudoNT ? "GMP" : "LBL"].offset + submap.hdrLBL.lbl1_offset;
   quint32 offsetLbl6 = submap.subfiles[submap.isPseudoNT ? "GMP" : "LBL"].offset + submap.hdrLBL.lbl6_offset;
@@ -2640,12 +2657,7 @@ void CMap::readShapes(QFile& srcFile) {
   for (const submap_t& submap : submaps) {
     qDebug() << "Submap name:" << submap.name << "| Subdivs count:" << submap.subdivs.size();
     if (submap.subdivs.isEmpty()) {
-      continue;
-    }
-    // @tmp: submaps with problems - too big size, wrong offset calc or int overflow?
-    if (submap.name == "15221501" || submap.name == "15221522") {
-      // @test
-      // if (submap.name != "15221529") {
+      qDebug() << "Skip RGN decode for this submap (no subdivs)" << submap.name;
       continue;
     }
     QString fileName = isSplit ? QString("%1.%2.mp").arg(outputFile).arg(submap.name) : outputFile;
@@ -2694,14 +2706,13 @@ void CMap::readShapes(QFile& srcFile) {
     }
 
 #ifdef SANITY_CHECK
-    // @todo: error report
-    if (hasV2LabelCount) {
-      qDebug() << "[INFO] hasV2Label count:" << hasV2LabelCount;
-      hasV2LabelCount = 0;
+    if (hasExtLabelCount) {
+      qDebug() << "[INFO] hasExtLabel count:" << hasExtLabelCount;
+      hasExtLabelCount = 0;
     }
-    if (lblInNetCount) {
-      qDebug() << "[INFO] lblInNetCount count:" << lblInNetCount;
-      lblInNetCount = 0;
+    if (hasNetLabelCount) {
+      qDebug() << "[INFO] hasNetLabel count:" << hasNetLabelCount;
+      hasNetLabelCount = 0;
     }
     if (skipPolygonsOutside) {
       qDebug() << "[WARN] Shape outside subdiv area count:" << skipPolygonsOutside;
@@ -2716,7 +2727,7 @@ void CMap::readShapes(QFile& srcFile) {
       tooManyErrors = 0;
     }
     if (tooLongLn) {
-      qDebug() << "[WARN] Too long polyline count:" << tooLongLn;
+      qDebug() << "[WARN] Too long polyline count (possibly bitstream error):" << tooLongLn;
       tooLongLn = 0;
     }
     if (invlType) {
@@ -2737,6 +2748,7 @@ void CMap::readShapes(QFile& srcFile) {
   }
 }
 
+int totalShapesDecoded = 0;
 void CMap::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap) {
   try {
     QByteArray rgndata;
@@ -2752,22 +2764,24 @@ void CMap::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap)
     }
 
     if (rgndata.size() == 0) {
-      qDebug() << "No RGN data";
+      qDebug() << "[WARN] No RGN data";
       return;
     }
 
     for (const subdiv_t& subdiv : submap.subdivs) {
       // subdiv.print();
-      decodeRgn(dstFile, srcFile, subdiv, submap.strtbl, rgndata);
+      if (invlCoord + invlType + suspiciousSegment + skipPolygonsOutside + tooManyErrors + tooLongLn > 500) {
+        qDebug() << "[ERROR] Too many errors: wrong offsets or unknown format with extended headers.";
+        break;
+      }
+      decodeRGN(dstFile, srcFile, subdiv, submap.strtbl, rgndata);
     }
   } catch (const CException& e) {
     qDebug() << "Fatal error:" << e.msg;
   }
 }
 
-// @check: slow fn?
 static inline bool isCompletelyOutside(const QPolygonF& poly, const QRectF& viewport) {
-  // return false;
   qreal north = qDegreesToRadians(-90.0);
   qreal south = qDegreesToRadians(90.0);
   qreal west = qDegreesToRadians(180.0);
@@ -2799,8 +2813,13 @@ static inline bool isCompletelyOutside(const QPolygonF& poly, const QRectF& view
   return !viewport.intersects(ref);
 }
 
-void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata) {
+void CMap::decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGarminStrTbl* strtbl, const QByteArray& rgndata) {
   if (subdiv.rgn_start == subdiv.rgn_end && !subdiv.lengthPolygons2 && !subdiv.lengthPolylines2 && !subdiv.lengthPoints2) {
+    return;
+  }
+
+  if (subdiv.rgn_start > subdiv.rgn_end && subdiv.rgn_end != 0x00) {
+    qDebug() << "[ERROR] Bug found: quint24 overflow. Compare rgn_start & rgn_end offsets:" << Qt::hex << subdiv.rgn_start << subdiv.rgn_end;
     return;
   }
 
@@ -2813,8 +2832,6 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
   polytype_t polylines;
   pointtype_t points;
   pointtype_t pois;
-
-  // qDebug() << "DEBUG subdiv:" << subdiv.n << subdiv.level;
 
   const quint8* pRawData = (quint8*)rgndata.data();
 
@@ -2884,6 +2901,7 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
         pt.isLbl6 ? strtbl->get(srcFile, pt.lbl_ptr, IGarminStrTbl::poi, pt.labels) : strtbl->get(srcFile, pt.lbl_ptr, IGarminStrTbl::lbl, pt.labels);
       }
 
+      ++totalShapesDecoded;
       points.push_back(pt);
     }
   }
@@ -2906,6 +2924,7 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
         po.isLbl6 ? strtbl->get(srcFile, po.lbl_ptr, IGarminStrTbl::poi, po.labels) : strtbl->get(srcFile, po.lbl_ptr, IGarminStrTbl::lbl, po.labels);
       }
 
+      ++totalShapesDecoded;
       pois.push_back(po);
     }
   }
@@ -2925,9 +2944,9 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
       }
 
       if (strtbl && ln.lbl_info) {
-        if (ln.lbl_in_NET) {
-          ++lblInNetCount;
-          // qDebug() << "[ln] 1 lbl_in_NET" << Qt::hex << ln.lbl_info;
+        if (ln.hasNetLabel) {
+          ++hasNetLabelCount;
+          // qDebug() << "[ln] 1 hasNetLabel" << Qt::hex << ln.lbl_info;
           strtbl->get(srcFile, ln.lbl_info, IGarminStrTbl::net, ln.labels);
         } else {
           strtbl->get(srcFile, ln.lbl_info, IGarminStrTbl::lbl, ln.labels);
@@ -2935,8 +2954,9 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
       } else {
         ;
       }
-      hasV2LabelCount += ln.hasV2LabelCount;
+      hasExtLabelCount += ln.hasExtLabelCount;
 
+      ++totalShapesDecoded;
       polylines.push_back(ln);
     }
   }
@@ -2956,9 +2976,9 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
       }
 
       if (strtbl && pg.lbl_info) {
-        if (pg.lbl_in_NET) {
-          ++lblInNetCount;
-          // qDebug() << "[pg] 1 lbl_in_NET" << Qt::hex << pg.lbl_info;
+        if (pg.hasNetLabel) {
+          ++hasNetLabelCount;
+          // qDebug() << "[pg] 1 hasNetLabel" << Qt::hex << pg.lbl_info;
           strtbl->get(srcFile, pg.lbl_info, IGarminStrTbl::net, pg.labels);
         } else {
           strtbl->get(srcFile, pg.lbl_info, IGarminStrTbl::lbl, pg.labels);
@@ -2966,8 +2986,9 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
       } else {
         ;
       }
-      hasV2LabelCount += pg.hasV2LabelCount;
+      hasExtLabelCount += pg.hasExtLabelCount;
 
+      ++totalShapesDecoded;
       polygons.push_back(pg);
     }
   }
@@ -2989,9 +3010,9 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
       }
 
       if (strtbl && pg.lbl_info) {
-        if (pg.lbl_in_NET) {
-          ++lblInNetCount;
-          // qDebug() << "[pg] 2 lbl_in_NET" << Qt::hex << pg.lbl_info;
+        if (pg.hasNetLabel) {
+          ++hasNetLabelCount;
+          // qDebug() << "[pg] 2 hasNetLabel" << Qt::hex << pg.lbl_info;
           strtbl->get(srcFile, pg.lbl_info, IGarminStrTbl::net, pg.labels);
         } else {
           strtbl->get(srcFile, pg.lbl_info, IGarminStrTbl::lbl, pg.labels);
@@ -2999,8 +3020,9 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
       } else {
         ;
       }
-      hasV2LabelCount += pg.hasV2LabelCount;
+      hasExtLabelCount += pg.hasExtLabelCount;
 
+      ++totalShapesDecoded;
       polygons.push_back(pg);
     }
   }
@@ -3021,9 +3043,9 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
       }
 
       if (strtbl && ln.lbl_info) {
-        if (ln.lbl_in_NET) {
-          ++lblInNetCount;
-          // qDebug() << "[ln] 2 lbl_in_NET" << Qt::hex << ln.lbl_info;
+        if (ln.hasNetLabel) {
+          ++hasNetLabelCount;
+          // qDebug() << "[ln] 2 hasNetLabel" << Qt::hex << ln.lbl_info;
           strtbl->get(srcFile, ln.lbl_info, IGarminStrTbl::net, ln.labels);
         } else {
           strtbl->get(srcFile, ln.lbl_info, IGarminStrTbl::lbl, ln.labels);
@@ -3031,8 +3053,9 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
       } else {
         ;
       }
-      hasV2LabelCount += ln.hasV2LabelCount;
+      hasExtLabelCount += ln.hasExtLabelCount;
 
+      ++totalShapesDecoded;
       polylines.push_back(ln);
     }
   }
@@ -3055,6 +3078,7 @@ void CMap::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
         pt.isLbl6 ? strtbl->get(srcFile, pt.lbl_ptr, IGarminStrTbl::poi, pt.labels) : strtbl->get(srcFile, pt.lbl_ptr, IGarminStrTbl::lbl, pt.labels);
       }
 
+      ++totalShapesDecoded;
       pois.push_back(pt);
     }
   }
@@ -3077,13 +3101,9 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
     ++count;
 
     if (pt.type <= 0) {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      tmpPolygons += "; Invalid type: 0x00";
-#else
       // qWarning() << "[pt] Invalid type" << Qt::hex << pt.type;
       ++invlType;
       continue;
-#endif
     }
 
     tmpPoints += QString("[POI]\nType=0x%1\n").arg(pt.type, 0, 16);
@@ -3122,14 +3142,10 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
     ++count;
 
     if (poi.type <= 0) {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      tmpPolygons += "; Invalid type: 0x00";
-#else
       // qWarning() << "[poi] Invalid type" << Qt::hex << poi.type;
       ++invlType;
       ++poiErrors;
       continue;
-#endif
     }
 
     tmpPois += QString("[POI]\nType=0x%1\n").arg(poi.type, 0, 16);
@@ -3169,13 +3185,9 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
     ++count;
 
     if (ln.type <= 0) {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      tmpPolygons += "; Invalid type: 0x00";
-#else
       // qWarning() << "[ln] Invalid type" << Qt::hex << ln.type;
       ++invlType;
       continue;
-#endif
     }
 
     tmpPolylines += QString("[POLYLINE]\nType=0x%1\n").arg(ln.type, 0, 16);
@@ -3202,14 +3214,6 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
       continue;
     }
 
-#ifdef DEBUG_WRITE_TO_OUTPUT
-    if (output.contains("; Possibly bitstream error")) {
-      tmpPolylines += QString("; Please provide more debug info here:\n; Start data: %1\n").arg(ln.debugData);
-    } else {
-      tmpPolylines += QString("; DEBUG ONLY:\n; Start data: %1\n").arg(ln.debugData);
-    }
-#endif
-
     tmpPolylines += output + "\n";
     tmpPolylines += "[END]\n\n";
 
@@ -3223,14 +3227,10 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
     ++count;
 
     if (pg.type <= 0) {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      tmpPolygons += "; Invalid type: 0x00";
-#else
       // qWarning() << "[pg] Invalid type" << Qt::hex << pg.type;
       ++invlType;
       ++pgErrors;
       continue;
-#endif
     }
 
     tmpPolygons += QString("[POLYGON]\nType=0x%1\n").arg(pg.type, 0, 16);
@@ -3250,14 +3250,6 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
     if (output.length() == 0) {
       continue;
     }
-
-#ifdef DEBUG_WRITE_TO_OUTPUT
-    if (output.contains("; Possibly bitstream error")) {
-      tmpPolygons += QString("; Please provide more debug info here:\n; BS Length: %1; Start data: %2").arg(pg.len).arg(pg.debugData);
-    } else {
-      tmpPolygons += QString("; DEBUG ONLY:\n; BS Length: %1; Start data: %2").arg(pg.len).arg(pg.debugData);
-    }
-#endif
 
     tmpPolygons += output + "\n";
     tmpPolygons += "[END]\n\n";
@@ -3347,7 +3339,7 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
   QString errors;
   QString result;
 
-  if (polyline.size() > 5000) {
+  if (polyline.size() > 8000) {
     // qDebug() << "[WARN] Too long polyline?" << polyline.size();
     ++tooLongLn;
     return "";
@@ -3369,9 +3361,7 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
     if (pointCount == 0) {
       firstPoint = point;
     } else if (pointPrev == point) {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-      errors += "; Skipping next dupe point\n";
-#endif
+      // qDebug() << "[INFO] Skipping next dupe point\n";
       ++totalErrors;
       continue;
     }
@@ -3399,11 +3389,8 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
   }
 
   if ((isLine && pointCount < 2) || (!isLine && pointCount < 3)) {
-#ifdef DEBUG_WRITE_TO_OUTPUT
-    return "; Does not make much sense: insufficient points";
-#else
+    // qDebug() << "[WARN] Does not make much sense: insufficient points";
     return "";
-#endif
   }
 
   if (errors.isEmpty()) {
