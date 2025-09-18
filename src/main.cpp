@@ -20,7 +20,7 @@
 #include <QtCore5Compat/QTextCodec>
 #include <iostream>
 
-const bool _SPLIT_SUBMAPS_ = false;
+const bool _SPLIT_SUBMAPS_ = true;
 
 #define SANITY_CHECK
 #define DEBUG_SHOW_MAPLEVELS
@@ -2665,7 +2665,7 @@ void CMap::readShapes(QFile& srcFile) {
     QString fileName = _SPLIT_SUBMAPS_ ? QString("%1.%2.mp").arg(outputFile).arg(submap.name) : outputFile;
     if (dstFile.isOpen()) {
       QFileInfo fi(dstFile);
-      const bool isOversize = fi.size() > 1000 * 1000 * 1000;
+      const bool isOversize = fi.size() > 1024 * 1024 * 1024;
       if (isOversize) {
         ++filePart;
         fileName = QString("%1.part%2.mp").arg(outputFile).arg(filePart + 1);

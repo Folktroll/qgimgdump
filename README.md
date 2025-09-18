@@ -28,3 +28,28 @@ This section contains useful resources for working with Garmin IMG files, includ
 ## License & Project Origin
 
 This project is a fork of [garmin parser of QMapShack](https://github.com/Maproom/qmapshack/tree/dev/src/qmapshack/map/garmin), licensed under GPLv3. Earlier commits were missing license headers by mistake, but the project has always been under GPLv3.
+
+
+## 📚 Extra tools
+
+### mp2json
+
+Tool for normalizing and exporting **Polish Format (.mp)** files into JSON for easier comparison and diffing.
+
+#### Features
+- Robust parsing of `.mp` files (handles `[END]` markers, ignores comments)
+- Deduplication of identical sections
+- Skipping empty props
+- Property filtering with wildcards:
+  - `--drop-props` → remove matching keys
+  - `--allow-props` → keep only matching keys
+- Coordinate trimming for `Data*` keys (`--coord-trim N`)
+- Flexible JSON output:
+  - Pretty print (`--indent`)
+  - Compact diff-friendly (`--compact`)
+  - Line wrapping with `--maxwidth`
+- Encoding choice: `utf-8` (default) or `cp1251`
+- Splitting output:
+  - by section type (`--split`)
+  - by max file size MB (`--split-size`)
+  - can combine both
