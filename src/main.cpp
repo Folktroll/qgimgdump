@@ -20,6 +20,8 @@
 #include <QtCore5Compat/QTextCodec>
 #include <iostream>
 
+const bool _SPLIT_SUBMAPS_ = false;
+
 #define SANITY_CHECK
 #define DEBUG_SHOW_MAPLEVELS
 // #define DEBUG_SHOW_POLY_DATA_SUBDIV
@@ -1529,15 +1531,16 @@ class CMap : public QCoreApplication {
   quint64 method1Time = 0;
   quint64 method2Time = 0;
   quint8 hasExtLabelCount = 0;
-  quint8 skipPolygonsOutside = 0;
-  quint8 suspiciousSegment = 0;
-  quint8 tooManyErrors = 0;
-  quint8 tooLongLn = 0;
-  quint8 invlType = 0;
   quint8 hasNetLabelCount = 0;
+  quint8 errTotals = 0;
+  quint8 errSkipOutside = 0;
+  quint8 errSkipDupePoint = 0;
+  quint8 errSuspiciousSegment = 0;
+  quint8 errPolyOversize = 0;
+  quint8 errInvalidType = 0;
 };
 
-quint8 invlCoord = 0;
+quint8 errInvalidCoords = 0;
 
 CMap::CMap(int& argc, char** argv) : QCoreApplication(argc, argv) {
   QCommandLineParser parser;
@@ -2641,7 +2644,6 @@ void CMap::readStringTable(QFile& srcFile, submap_t& submap) {
   }
 }
 
-const bool isSplit = true;
 void CMap::readShapes(QFile& srcFile) {
   // int numThreads = 4;
 
@@ -2660,7 +2662,7 @@ void CMap::readShapes(QFile& srcFile) {
       qDebug() << "Skip RGN decode for this submap (no subdivs)" << submap.name;
       continue;
     }
-    QString fileName = isSplit ? QString("%1.%2.mp").arg(outputFile).arg(submap.name) : outputFile;
+    QString fileName = _SPLIT_SUBMAPS_ ? QString("%1.%2.mp").arg(outputFile).arg(submap.name) : outputFile;
     if (dstFile.isOpen()) {
       QFileInfo fi(dstFile);
       const bool isOversize = fi.size() > 1000 * 1000 * 1000;
@@ -2668,7 +2670,7 @@ void CMap::readShapes(QFile& srcFile) {
         ++filePart;
         fileName = QString("%1.part%2.mp").arg(outputFile).arg(filePart + 1);
       }
-      if (isSplit || isOversize) {
+      if (_SPLIT_SUBMAPS_ || isOversize) {
         dstFile.flush();
         dstFile.close();
         dstFile.setFileName(fileName);
@@ -2690,7 +2692,7 @@ void CMap::readShapes(QFile& srcFile) {
       if (!dstFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
         throw CException("Error opening output file: " + dstFile.errorString());
       }
-      if (isSplit) {
+      if (_SPLIT_SUBMAPS_) {
         writeHeader(dstFile, submap);
       } else if (isFirst) {
         isFirst = false;
@@ -2714,29 +2716,33 @@ void CMap::readShapes(QFile& srcFile) {
       qDebug() << "[INFO] hasNetLabel count:" << hasNetLabelCount;
       hasNetLabelCount = 0;
     }
-    if (skipPolygonsOutside) {
-      qDebug() << "[WARN] Shape outside subdiv area count:" << skipPolygonsOutside;
-      skipPolygonsOutside = 0;
+    if (errSkipOutside) {
+      qDebug() << "[WARN] Shape outside subdiv area count:" << errSkipOutside;
+      errSkipOutside = 0;
     }
-    if (suspiciousSegment) {
-      qDebug() << "[WARN] Suspicious segment between points count:" << suspiciousSegment;
-      suspiciousSegment = 0;
+    if (errSkipDupePoint) {
+      qDebug() << "[WARN] Skip dupe points count:" << errSkipDupePoint;
+      errSkipDupePoint = 0;
     }
-    if (tooManyErrors) {
-      qDebug() << "[WARN] More then 50 errors count:" << tooManyErrors;
-      tooManyErrors = 0;
+    if (errSuspiciousSegment) {
+      qDebug() << "[WARN] Suspicious segment between points count:" << errSuspiciousSegment;
+      errSuspiciousSegment = 0;
     }
-    if (tooLongLn) {
-      qDebug() << "[WARN] Too long polyline count (possibly bitstream error):" << tooLongLn;
-      tooLongLn = 0;
+    if (errTotals) {
+      qDebug() << "[WARN] More then 50 errors count:" << errTotals;
+      errTotals = 0;
     }
-    if (invlType) {
-      qDebug() << "[WARN] Invalid shape type count:" << invlType;
-      invlType = 0;
+    if (errPolyOversize) {
+      qDebug() << "[WARN] Too long polyline count (possibly bitstream error):" << errPolyOversize;
+      errPolyOversize = 0;
     }
-    if (invlCoord) {
-      qDebug() << "[WARN] Invalid coords count:" << invlCoord;
-      invlCoord = 0;
+    if (errInvalidType) {
+      qDebug() << "[WARN] Invalid shape type count:" << errInvalidType;
+      errInvalidType = 0;
+    }
+    if (errInvalidCoords) {
+      qDebug() << "[WARN] Invalid coords count:" << errInvalidCoords;
+      errInvalidCoords = 0;
     }
 #endif
   }
@@ -2751,30 +2757,30 @@ void CMap::readShapes(QFile& srcFile) {
 int totalShapesDecoded = 0;
 void CMap::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap) {
   try {
-    QByteArray rgndata;
+    QByteArray rgnData;
     if (submap.isPseudoNT) {
       srcFile.seek(submap.subfiles["RGN"].headerOffset);
-      rgndata = srcFile.read(submap.subfiles["RGN"].headerSize);
+      rgnData = srcFile.read(submap.subfiles["RGN"].headerSize);
       srcFile.seek(submap.subfiles["RGN"].bodyOffset);
-      rgndata += srcFile.read(submap.subfiles["RGN"].bodySize);
+      rgnData += srcFile.read(submap.subfiles["RGN"].bodySize);
       auto totalSize = submap.subfiles["RGN"].headerSize + submap.subfiles["RGN"].bodySize;
     } else {
       srcFile.seek(submap.subfiles["RGN"].offset);
-      rgndata = srcFile.read(submap.subfiles["RGN"].size);
+      rgnData = srcFile.read(submap.subfiles["RGN"].size);
     }
 
-    if (rgndata.size() == 0) {
+    if (rgnData.size() == 0) {
       qDebug() << "[WARN] No RGN data";
       return;
     }
 
     for (const subdiv_t& subdiv : submap.subdivs) {
       // subdiv.print();
-      if (invlCoord + invlType + suspiciousSegment + skipPolygonsOutside + tooManyErrors + tooLongLn > 500) {
+      if (errInvalidCoords + errInvalidType + errSuspiciousSegment + errSkipOutside + errSkipDupePoint + errTotals + errPolyOversize > 500) {
         qDebug() << "[ERROR] Too many errors: wrong offsets or unknown format with extended headers.";
         break;
       }
-      decodeRGN(dstFile, srcFile, subdiv, submap.strtbl, rgndata);
+      decodeRGN(dstFile, srcFile, subdiv, submap.strtbl, rgnData);
     }
   } catch (const CException& e) {
     qDebug() << "Fatal error:" << e.msg;
@@ -2893,7 +2899,7 @@ void CMap::decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
 
       if (!subdiv.area.contains(pt.pos)) {
         // qDebug() << "[WARN] Skip points outside subdiv area:" << subdiv.area << pt.pos;
-        ++skipPolygonsOutside;
+        ++errSkipOutside;
         continue;
       }
 
@@ -2916,7 +2922,7 @@ void CMap::decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
 
       if (!subdiv.area.contains(po.pos)) {
         // qDebug() << "[WARN] Skip pois outside subdiv area:" << subdiv.area << po.pos;
-        ++skipPolygonsOutside;
+        ++errSkipOutside;
         continue;
       }
 
@@ -2939,7 +2945,7 @@ void CMap::decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
 
       if (isCompletelyOutside(ln.points, subdiv.area)) {
         // qDebug() << "[WARN] Skip polylines outside subdiv area:" << subdiv.area << ln.points.toList().first(10);
-        ++skipPolygonsOutside;
+        ++errSkipOutside;
         continue;
       }
 
@@ -2971,7 +2977,7 @@ void CMap::decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
 
       if (isCompletelyOutside(pg.points, subdiv.area)) {
         // qDebug() << "[WARN] Skip polygons outside subdiv area:" << subdiv.area << pg.points.toList().first(10);
-        ++skipPolygonsOutside;
+        ++errSkipOutside;
         continue;
       }
 
@@ -3005,7 +3011,7 @@ void CMap::decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
 
       if (isCompletelyOutside(pg.points, subdiv.area)) {
         // qDebug() << "[WARN] Skip polygons outside subdiv area:" << subdiv.area << pg.points.toList().first(10);
-        ++skipPolygonsOutside;
+        ++errSkipOutside;
         continue;
       }
 
@@ -3038,7 +3044,7 @@ void CMap::decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
 
       if (isCompletelyOutside(ln.points, subdiv.area)) {
         // qDebug() << "[WARN] Skip polygons outside subdiv area:" << subdiv.area << ln.points.toList().first(10);
-        ++skipPolygonsOutside;
+        ++errSkipOutside;
         continue;
       }
 
@@ -3070,7 +3076,7 @@ void CMap::decodeRGN(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, IGa
 
       if (!subdiv.area.contains(pt.pos)) {
         // qDebug() << "[WARN] Skip polygons outside subdiv area:" << subdiv.area << pt.pos;
-        ++skipPolygonsOutside;
+        ++errSkipOutside;
         continue;
       }
 
@@ -3102,7 +3108,7 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
 
     if (pt.type <= 0) {
       // qWarning() << "[pt] Invalid type" << Qt::hex << pt.type;
-      ++invlType;
+      ++errInvalidType;
       continue;
     }
 
@@ -3143,7 +3149,7 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
 
     if (poi.type <= 0) {
       // qWarning() << "[poi] Invalid type" << Qt::hex << poi.type;
-      ++invlType;
+      ++errInvalidType;
       ++poiErrors;
       continue;
     }
@@ -3186,7 +3192,7 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
 
     if (ln.type <= 0) {
       // qWarning() << "[ln] Invalid type" << Qt::hex << ln.type;
-      ++invlType;
+      ++errInvalidType;
       continue;
     }
 
@@ -3228,7 +3234,7 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
 
     if (pg.type <= 0) {
       // qWarning() << "[pg] Invalid type" << Qt::hex << pg.type;
-      ++invlType;
+      ++errInvalidType;
       ++pgErrors;
       continue;
     }
@@ -3260,7 +3266,7 @@ void CMap::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, 
 
   if (poiErrors) {
     // qWarning() << "[poi] Invalid type:" << poiErrors;
-    ++invlType;
+    ++errInvalidType;
   }
 }
 
@@ -3284,7 +3290,7 @@ inline QPointF toDegreesSafe(const QPointF& pointRad) {
   lng = normalizeLng(lng);
   if (qAbs(lat) == 90.0 || qAbs(lng) == 180.0) {
     // qDebug() << "[WARN] Invalid coords:" << lat << lng;
-    ++invlCoord;
+    ++errInvalidCoords;
   }
   return QPointF(lng, lat);
 }
@@ -3341,7 +3347,7 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
 
   if (polyline.size() > 8000) {
     // qDebug() << "[WARN] Too long polyline?" << polyline.size();
-    ++tooLongLn;
+    ++errPolyOversize;
     return "";
   }
   result.reserve(polyline.size() * 20);
@@ -3349,11 +3355,11 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
   QPointF pointPrev;
   QPointF firstPoint;
   quint8 pointCount = 0;
-  quint8 totalErrors = 0;
+  quint8 tooManyPolyErrs = 0;
 
   for (const QPointF& point : polyline) {
-    if (totalErrors > 50) {
-      ++tooManyErrors;
+    if (tooManyPolyErrs > 50) {
+      ++errTotals;
       // qDebug() << "[WARN] More then 50 errors:" << totalErrors;
       return "";
     }
@@ -3362,10 +3368,13 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
       firstPoint = point;
     } else if (pointPrev == point) {
       // qDebug() << "[INFO] Skipping next dupe point\n";
-      ++totalErrors;
+      ++errSkipDupePoint;
+      ++tooManyPolyErrs;
       continue;
     }
 
+    // @investigate: cut the polygon if it forms a figure eight?
+    // @investigate: removes the last point if it matches the first one (closed polygon)
     if (isLine == false && pointCount > 2 && point == firstPoint) {
       break;
     }
@@ -3373,8 +3382,8 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
 #ifdef SANITY_CHECK
     if (pointCount && isSuspiciousSegment(pointPrev, point)) {
       // qDebug() << "[WARN] Suspicious segment between points:" << pointPrev << point << pointCount << "/" << polyline.size();
-      ++suspiciousSegment;
-      ++totalErrors;
+      ++errSuspiciousSegment;
+      ++tooManyPolyErrs;
       continue;
     }
 #endif
@@ -3388,6 +3397,7 @@ QString CMap::convLnDegStr(const QPolygonF& polyline, quint32 level, bool isLine
     result += convPtDegStr(point);
   }
 
+  // @investigate: a polygon with 3 points sounds dubious
   if ((isLine && pointCount < 2) || (!isLine && pointCount < 3)) {
     // qDebug() << "[WARN] Does not make much sense: insufficient points";
     return "";

@@ -1,3 +1,7 @@
+### Todo or what doesn't work:
+- *there are problems with LBL in the NET subfile*
+
+
 ## 📚 Wiki & Knowledge
 
 This section contains useful resources for working with Garmin IMG files, including PDFs and forum discussions.
@@ -12,6 +16,9 @@ This section contains useful resources for working with Garmin IMG files, includ
 
 - **[Garmin IMG Subfiles Format](https://www.memotech.franken.de/FileFormats/Garmin_IMG_Subfiles_Format.pdf)**  
   Detailed description of Garmin IMG subfile structures, including TRE, RGN, LBL, NET, NOD, and DEM (by Herbert Oppmann).
+
+### 📄 PDF Manuals
+- **[cGPSmapper User Manual](https://gpstraces.net/tutos/cGPSmapper-UsrMan-v02.5.pdf)**  
 
 ### 💬 Forum Discussion
 
