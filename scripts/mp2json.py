@@ -23,11 +23,12 @@ Features:
   * can combine both
 
 Usage examples:
-    python mp2json.py input.mp output.json --indent 2
-    python mp2json.py input.mp output.json --drop-props Nod*,*Idx
-    python mp2json.py input.mp output.json --allow-props Data*,Label*
-    python mp2json.py input.mp output.json --coord-trim 3
-    python mp2json.py input.mp output.json --encoding cp1251 --split-size 50
+    python scripts/mp2json.py input.mp output.json --indent 2
+    python scripts/mp2json.py input.mp output.json --drop-props Nod*,*Idx
+    python scripts/mp2json.py input.mp output.json --allow-props Data*,Label*
+    python scripts/mp2json.py input.mp output.json --coord-trim 3
+    python scripts/mp2json.py input.mp output.json --encoding cp1251 --split-size 20
+    python scripts/mp2json.py input.mp output.json --allow-props Data*,Type* --coord-trim 3 --encoding cp1251 --split --split-size 20 --compact
 """
 
 import argparse
