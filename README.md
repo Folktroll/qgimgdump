@@ -5,8 +5,7 @@
 - Support for **GARMIN non-NT** and **pseudo-NT** formats  
 
 ### ⁉️ Todo or what doesn't work:
-- *there are problems with LBL in non-NT format (wrong offsets)*
-- *there are problems with LBL in the NET subfile*
+- *Missing strings for with LBL in the NET subfile*
 
 ## ✖️ Out of Scope
 - Decoding of **NT format**, locked/protected maps, or similar features  

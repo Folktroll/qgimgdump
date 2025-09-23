@@ -2,3 +2,6 @@
 .vscode/
 bin/
 build/
+**/*.mp
+**/*.csv
+**/*.img
