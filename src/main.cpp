@@ -1507,6 +1507,7 @@ class ImgDump : public QCoreApplication {
   bool splitSubmaps = false;
   bool csvOutput = false;
   bool debugInfo = false;
+  float maxFileSize = 1 * 1000 * 1024 * 1024;
   int totalPt = 0;
   int totalPo = 0;
   int totalLn = 0;
@@ -1547,12 +1548,14 @@ ImgDump::ImgDump(int& argc, char** argv) : QCoreApplication(argc, argv) {
 
   QCommandLineOption inputOption(QStringList() << "i" << "input", ".img input file", "input_file.img");
   QCommandLineOption outputOption(QStringList() << "o" << "output", "base output file", "output_file");
-  QCommandLineOption splitOption(QStringList() << "split", "Creates a separate file for each submap");
+  QCommandLineOption splitOption(QStringList() << "s" << "submap", "Creates a separate file for each submap");
   QCommandLineOption debugOption(QStringList() << "d" << "debug", "Print debug info");
+  QCommandLineOption fsizeOption(QStringList() << "maxsize", "File size per chunk in GB (.mp format only)", "maxsize", "1");
   parser.addOption(inputOption);
   parser.addOption(outputOption);
   parser.addOption(splitOption);
   parser.addOption(debugOption);
+  parser.addOption(fsizeOption);
   parser.process(this->arguments());
 
   if (!parser.isSet(inputOption)) {
@@ -1608,6 +1611,10 @@ ImgDump::ImgDump(int& argc, char** argv) : QCoreApplication(argc, argv) {
 
   if (parser.isSet(debugOption)) {
     debugInfo = true;
+  }
+
+  if (parser.isSet(fsizeOption)) {
+    maxFileSize = parser.value(fsizeOption.valueName()).toFloat() * 1000 * 1024 * 1024;
   }
 
   codec = QTextCodec::codecForName("Windows-1251");
@@ -1973,8 +1980,10 @@ void ImgDump::readFat(QFile& srcFile) {
         qDebug() << "Skip duplicate subfile type:" << nameStr << typeStr;
       } else if (strcmp(typeStr, "SRT") == 0 || strcmp(typeStr, "MDR") == 0 || strcmp(typeStr, "MD2") == 0 || strcmp(typeStr, "TYP") == 0) {
         qDebug() << "Skip useless subfile type:" << nameStr << typeStr;
-      } else if (strcmp(typeStr, "NET") == 0 || strcmp(typeStr, "NOD") == 0 || strcmp(typeStr, "LBL") == 0 || strcmp(typeStr, "MPS") == 0) {
-        qDebug() << "Skip subfile type (for debug purpose):" << nameStr << typeStr;
+
+        // } else if (strcmp(typeStr, "NET") == 0) {  //|| strcmp(typeStr, "NOD") == 0 || strcmp(typeStr, "LBL") == 0 || strcmp(typeStr, "MPS") == 0) {
+        // NET subfile: throwing an exception
+        // qDebug() << "Skip subfile type (for debug purpose):" << nameStr << typeStr;
       } else {
         submap_t& submap = submaps[nameStr];
         submap.name = nameStr;
@@ -2014,6 +2023,11 @@ void ImgDump::readImg(QFile& srcFile, submap_t& submap) {
     quint16 size;
     srcFile.read((char*)&size, sizeof(size));
 
+    if (size > submap.subfiles[subfileName].size) {
+      qDebug() << "[WARN] Header size is bigger then subfile block size:" << subfileName << Qt::hex << size << submap.subfiles[subfileName].size;
+      size = submap.subfiles[subfileName].size;
+    }
+
     srcFile.seek(submap.subfiles[subfileName].offset);
     srcFile.read((char*)&submap.hdrRGN, size);
 
@@ -2028,6 +2042,11 @@ void ImgDump::readImg(QFile& srcFile, submap_t& submap) {
     srcFile.seek(submap.subfiles[subfileName].offset);
     quint16 size;
     srcFile.read((char*)&size, sizeof(size));
+
+    if (size > submap.subfiles[subfileName].size) {
+      qDebug() << "[WARN] Header size is bigger then subfile block size:" << subfileName << Qt::hex << size << submap.subfiles[subfileName].size;
+      size = submap.subfiles[subfileName].size;
+    }
 
     srcFile.seek(submap.subfiles[subfileName].offset);
     srcFile.read((char*)&submap.hdrLBL, size);
@@ -2044,6 +2063,11 @@ void ImgDump::readImg(QFile& srcFile, submap_t& submap) {
     quint16 size;
     srcFile.read((char*)&size, sizeof(size));
 
+    if (size > submap.subfiles[subfileName].size) {
+      qDebug() << "[WARN] Header size is bigger then subfile block size:" << subfileName << Qt::hex << size << submap.subfiles[subfileName].size;
+      size = submap.subfiles[subfileName].size;
+    }
+
     srcFile.seek(submap.subfiles[subfileName].offset);
     srcFile.read((char*)&submap.hdrNET, size);
 
@@ -2059,6 +2083,11 @@ void ImgDump::readImg(QFile& srcFile, submap_t& submap) {
     quint16 size;
     srcFile.read((char*)&size, sizeof(size));
 
+    if (size > submap.subfiles[subfileName].size) {
+      qDebug() << "[WARN] Header size is bigger then subfile block size:" << subfileName << Qt::hex << size << submap.subfiles[subfileName].size;
+      size = submap.subfiles[subfileName].size;
+    }
+
     srcFile.seek(submap.subfiles[subfileName].offset);
     srcFile.read((char*)&submap.hdrNOD, size);
 
@@ -2073,6 +2102,11 @@ void ImgDump::readImg(QFile& srcFile, submap_t& submap) {
     srcFile.seek(submap.subfiles[subfileName].offset);
     quint16 size;
     srcFile.read((char*)&size, sizeof(size));
+
+    if (size > submap.subfiles[subfileName].size) {
+      qDebug() << "[WARN] Header size is bigger then subfile block size:" << subfileName << Qt::hex << size << submap.subfiles[subfileName].size;
+      size = submap.subfiles[subfileName].size;
+    }
 
     srcFile.seek(submap.subfiles[subfileName].offset);
     srcFile.read((char*)&submap.hdrDEM, size);
@@ -2277,12 +2311,6 @@ void ImgDump::readSubmaps(QFile& srcFile) {
   qDebug() << "Submaps count:" << submaps.size();
 
   for (auto& submap : submaps) {
-    print("--- Subfiles ---\n");
-    for (const auto& [subfile, part] : submap.subfiles.asKeyValueRange()) {
-      print("%s %s %08X %08X %08X %08X %08X %08X\n", submap.name.toLocal8Bit().data(), subfile.toLocal8Bit().data(), part.offset, part.size, part.hdrOffset, part.hdrSize,
-            part.bodyOffset, part.bodySize);
-    }
-
     if (submap.isPseudoNT) {
       readGmp(srcFile, submap);
 
@@ -2300,13 +2328,15 @@ void ImgDump::readSubmaps(QFile& srcFile) {
     parseStringTable(srcFile, submap);
   }
 
-  // print("--- Subfiles ---\n");
-  // for (auto& submap : submaps) {
-  //   for (const auto& [subfile, part] : submap.subfiles.asKeyValueRange()) {
-  //     print("%s %s %08X %08X %08X %08X %08X %08X\n", submap.name.toLocal8Bit().data(), subfile.toLocal8Bit().data(), part.offset, part.size, part.headerOffset, part.headerSize,
-  //           part.bodyOffset, part.bodySize);
-  //   }
-  // }
+  if (debugInfo) {
+    print("--- Subfiles ---\n");
+    for (auto& submap : submaps) {
+      for (const auto& [subfile, part] : submap.subfiles.asKeyValueRange()) {
+        print("%s %s %08X %08X %08X %08X %08X %08X\n", submap.name.toLocal8Bit().data(), subfile.toLocal8Bit().data(), part.offset, part.size, part.headerOffset, part.headerSize,
+              part.bodyOffset, part.bodySize);
+      }
+    }
+  }
 
   fflush(stdout);
   fflush(stderr);
@@ -2333,7 +2363,6 @@ void ImgDump::parseMapLevels(QFile& srcFile, submap_t& submap) {
     if (debugInfo) {
       pMapLevel->print();
     }
-    qDebug() << "DEBUG" << nSubdivs << nSubdivsLast << pMapLevel;
     submap.mapLevels << *pMapLevel;
     pMapLevel++;
   }
@@ -2573,6 +2602,11 @@ void ImgDump::parseSubdivInfoExt(QFile& srcFile, submap_t& submap) {
 }
 
 void ImgDump::parseStringTable(QFile& srcFile, submap_t& submap) {
+  if (!submap.subfiles.keys().contains("LBL")) {
+    qDebug().noquote() << "Missing LBL subfile for submap" << submap.name;
+    return;
+  }
+
   quint32 offsetLbl1 = submap.subfiles[submap.isPseudoNT ? "GMP" : "LBL"].offset + submap.hdrLBL.lbl1_offset;
   quint32 offsetLbl6 = submap.subfiles[submap.isPseudoNT ? "GMP" : "LBL"].offset + submap.hdrLBL.lbl6_offset;
 
@@ -2626,10 +2660,10 @@ void ImgDump::readShapes(QFile& srcFile) {
     }
 
     QFileInfo ofInfo(outputFile);
-    QString fileName = QString("%1%2.%3").arg(ofInfo.baseName()).arg(splitSubmaps ? QString("-%1").arg(submap.name) : "").arg(ofInfo.suffix());
+    QString fileName = QString("%1%2.%3").arg(ofInfo.baseName()).arg(splitSubmaps ? "-" + submap.name : "").arg(ofInfo.suffix());
     if (dstFile.isOpen()) {
       QFileInfo fi(dstFile);
-      const bool isOversize = fi.size() > 1024 * 1024 * 1024;
+      const bool isOversize = fi.size() > maxFileSize;
       if (!csvOutput) {
         if (isOversize) {
           ++filePart;
@@ -2645,7 +2679,7 @@ void ImgDump::readShapes(QFile& srcFile) {
           writeHeader(dstFile, submap);
 
           if (isOversize && filePart == 1) {
-            const QString firstPartName = QString("%1.part%2.%3").arg(ofInfo.baseName()).arg(filePart).arg(ofInfo.suffix());
+            const QString firstPartName = QString("%1-part%2.%3").arg(ofInfo.baseName()).arg(filePart).arg(ofInfo.suffix());
             if (QFile::exists(firstPartName)) {
               QFile::remove(firstPartName);
             }
@@ -2760,8 +2794,16 @@ void ImgDump::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& subm
       decodeRgn(dstFile, srcFile, subdiv, submap.strtbl, rgnData);
     }
     totalShapesDecoded = totalPt + totalPo + totalLn + totalPg + totalPt2 + totalPo2 + totalLn2 + totalPg2;
-    qDebug() << "Total decoded shapes:" << totalShapesDecoded << "| pt/po/ln/pg/pt2/po2/ln2/pg2" << totalPt << totalPo << totalLn << totalPg << totalPt2 << totalPo2 << totalLn2
-             << totalPg2;
+    qDebug().noquote() << QString("Total decoded shapes: %1 | RGN: %2 %3 %4 %5 %6 %7 %8 %9")
+                              .arg(totalShapesDecoded, -8)
+                              .arg(totalPt, -8)
+                              .arg(totalPo, -8)
+                              .arg(totalLn, -8)
+                              .arg(totalPg, -8)
+                              .arg(totalPt2, -8)
+                              .arg(totalPo2, -8)
+                              .arg(totalLn2, -8)
+                              .arg(totalPg2, -8);
     totalPt = totalPo = totalLn = totalPg = totalPt2 = totalPo2 = totalLn2 = totalPg2 = 0;
   } catch (const Exception& e) {
     qDebug() << "Fatal error:" << e.msg;
@@ -3506,7 +3548,7 @@ int main(int argc, char* argv[]) {
   try {
     QElapsedTimer timerMain;
     timerMain.start();
-    ImgDump cmap(argc, argv);
+    ImgDump app(argc, argv);
     qDebug() << "Run time:" << QString::number(timerMain.elapsed() / 1000) << "sec.";
   } catch (const Exception& e) {
     fflush(stdout);
