@@ -1451,8 +1451,8 @@ class ImgDump : public QCoreApplication {
   void processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap);
   void readShapes(QFile& srcFile);
   void decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, StrTbl* strtbl, const QByteArray& rgndata);
-  void writeCsv(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level);
-  void writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level);
+  void writeCsv(QFile& dstFile, pointtype_t& points, pointtype_t& pois, polytype_t& polylines, polytype_t& polygons, quint32 level);
+  void writeMp(QFile& dstFile, pointtype_t& points, pointtype_t& pois, polytype_t& polylines, polytype_t& polygons, quint32 level);
   QString convPtDegStr(const QPointF& point, bool wkt = false);
   QString convLnDegStr(const QPolygonF& polyline, bool isLine, bool wkt = false);
   void writeHeader(QFile& dstFile, const submap_t& submap);
@@ -2332,7 +2332,7 @@ void ImgDump::readSubmaps(QFile& srcFile) {
     print("--- Subfiles ---\n");
     for (auto& submap : submaps) {
       for (const auto& [subfile, part] : submap.subfiles.asKeyValueRange()) {
-        print("%s %s %08X %08X %08X %08X %08X %08X\n", submap.name.toLocal8Bit().data(), subfile.toLocal8Bit().data(), part.offset, part.size, part.headerOffset, part.headerSize,
+        print("%s %s %08X %08X %08X %08X %08X %08X\n", submap.name.toLocal8Bit().data(), subfile.toLocal8Bit().data(), part.offset, part.size, part.hdrOffset, part.hdrSize,
               part.bodyOffset, part.bodySize);
       }
     }
@@ -2794,7 +2794,7 @@ void ImgDump::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& subm
       decodeRgn(dstFile, srcFile, subdiv, submap.strtbl, rgnData);
     }
     totalShapesDecoded = totalPt + totalPo + totalLn + totalPg + totalPt2 + totalPo2 + totalLn2 + totalPg2;
-    qDebug().noquote() << QString("Total decoded shapes: %1 | RGN: %2 %3 %4 %5 %6 %7 %8 %9")
+    qDebug().noquote() << QString("Total decoded shapes: %1 | RGN: %2 %3 %4 %5 %6 %7 %8 %9 | Shapes: %10 %11 %12")
                               .arg(totalShapesDecoded, -8)
                               .arg(totalPt, -8)
                               .arg(totalPo, -8)
@@ -2803,7 +2803,10 @@ void ImgDump::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& subm
                               .arg(totalPt2, -8)
                               .arg(totalPo2, -8)
                               .arg(totalLn2, -8)
-                              .arg(totalPg2, -8);
+                              .arg(totalPg2, -8)
+                              .arg(totalPt + totalPo + totalPt2 + totalPo2, -8)
+                              .arg(totalLn + totalLn2, -8)
+                              .arg(totalPg + totalPg2, -8);
     totalPt = totalPo = totalLn = totalPg = totalPt2 = totalPo2 = totalLn2 = totalPg2 = 0;
   } catch (const Exception& e) {
     qDebug() << "Fatal error:" << e.msg;
@@ -3113,16 +3116,16 @@ void ImgDump::decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, 
   }
 
   if (csvOutput) {
-    writeCsv(dstFile, polylines, polygons, points, pois, subdiv.level);
+    writeCsv(dstFile, points, pois, polylines, polygons, subdiv.level);
   } else {
-    writeMp(dstFile, polylines, polygons, points, pois, subdiv.level);
+    writeMp(dstFile, points, pois, polylines, polygons, subdiv.level);
   }
 }
 
-void ImgDump::writeCsv(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level) {
+void ImgDump::writeCsv(QFile& dstFile, pointtype_t& points, pointtype_t& pois, polytype_t& polylines, polytype_t& polygons, quint32 level) {
   int count;
-  int poiErrors = 0;
   int ptErrors = 0;
+  int poErrors = 0;
   int lnErrors = 0;
   int pgErrors = 0;
 
@@ -3133,31 +3136,32 @@ void ImgDump::writeCsv(QFile& dstFile, polytype_t& polylines, polytype_t& polygo
     ++count;
 
     if (pt.type <= 0) {
-      // qWarning() << "[pt] Invalid type" << Qt::hex << pt.type;
+      qWarning() << "[pt] Invalid type" << Qt::hex << pt.type;
       ++warnInvalidType;
       continue;
     }
 
-    strPoints += QString("pt;%1;%2;%3;POINT(%4);-1\n").arg(pt.type).arg(pt.hasLabel() ? pt.labels.at(0) : "").arg(level).arg(convPtDegStr(pt.pos, true));
+    strPoints += QString("pt\t%1\t%2\t%3\tPOINT(%4)\t-1\n").arg(pt.type).arg(pt.hasLabel() ? pt.labels.at(0) : "").arg(level).arg(convPtDegStr(pt.pos, true));
   }
-  dstFile.write(codec->fromUnicode(strPoints));
+  // dstFile.write(codec->fromUnicode(strPoints));
+  dstFile.write(strPoints.toUtf8());
   dstFile.flush();
 
   count = 0;
   QString strPois = "";
-  for (const RgnPoint& poi : pois) {
+  for (const RgnPoint& po : pois) {
     ++count;
 
-    if (poi.type <= 0) {
-      // qWarning() << "[poi] Invalid type" << Qt::hex << poi.type;
+    if (po.type <= 0) {
+      qWarning() << "[po] Invalid type" << Qt::hex << po.type;
       ++warnInvalidType;
-      ++poiErrors;
       continue;
     }
 
-    strPois += QString("pt;%1;%2;%3;POINT(%4);-1\n").arg(poi.type).arg(poi.hasLabel() ? poi.labels.at(0) : "").arg(level).arg(convPtDegStr(poi.pos, true));
+    strPois += QString("pt\t%1\t%2\t%3\tPOINT(%4)\t-1\n").arg(po.type).arg(po.hasLabel() ? po.labels.at(0) : "").arg(level).arg(convPtDegStr(po.pos, true));
   }
-  dstFile.write(codec->fromUnicode(strPois));
+  // dstFile.write(codec->fromUnicode(strPois));
+  dstFile.write(strPois.toUtf8());
   dstFile.flush();
 
   count = 0;
@@ -3166,14 +3170,15 @@ void ImgDump::writeCsv(QFile& dstFile, polytype_t& polylines, polytype_t& polygo
     ++count;
 
     if (ln.type <= 0) {
-      // qWarning() << "[ln] Invalid type" << Qt::hex << ln.type;
+      qWarning() << "[ln] Invalid type" << Qt::hex << ln.type;
       ++warnInvalidType;
       continue;
     }
 
-    strPolylines += QString("ln;%1;%2;%3;LINESTRING(%4);-1\n").arg(ln.type).arg(ln.hasLabel() ? ln.labels.at(0) : "").arg(level).arg(convLnDegStr(ln.points, true, true));
+    strPolylines += QString("ln\t%1\t%2\t%3\tLINESTRING(%4)\t-1\n").arg(ln.type).arg(ln.hasLabel() ? ln.labels.at(0) : "").arg(level).arg(convLnDegStr(ln.points, true, true));
   }
-  dstFile.write(codec->fromUnicode(strPolylines));
+  // dstFile.write(codec->fromUnicode(strPolylines));
+  dstFile.write(strPolylines.toUtf8());
   dstFile.flush();
 
   count = 0;
@@ -3182,24 +3187,20 @@ void ImgDump::writeCsv(QFile& dstFile, polytype_t& polylines, polytype_t& polygo
     ++count;
 
     if (pg.type <= 0) {
-      // qWarning() << "[pg] Invalid type" << Qt::hex << pg.type;
+      qWarning() << "[pg] Invalid type" << Qt::hex << pg.type;
       ++warnInvalidType;
       ++pgErrors;
       continue;
     }
 
-    strPolylines += QString("pg;%1;%2;%3;POLYGON(%4);-1\n").arg(pg.type).arg(pg.hasLabel() ? pg.labels.at(0) : "").arg(level).arg(convLnDegStr(pg.points, false, true));
+    strPolygons += QString("pg\t%1\t%2\t%3\tPOLYGON(%4)\t-1\n").arg(pg.type).arg(pg.hasLabel() ? pg.labels.at(0) : "").arg(level).arg(convLnDegStr(pg.points, false, true));
   }
-  dstFile.write(codec->fromUnicode(strPolygons));
+  // dstFile.write(codec->fromUnicode(strPolygons));
+  dstFile.write(strPolygons.toUtf8());
   dstFile.flush();
-
-  if (poiErrors) {
-    // qWarning() << "[poi] Invalid type:" << poiErrors;
-    ++warnInvalidType;
-  }
 }
 
-void ImgDump::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygons, pointtype_t& points, pointtype_t& pois, quint32 level) {
+void ImgDump::writeMp(QFile& dstFile, pointtype_t& points, pointtype_t& pois, polytype_t& polylines, polytype_t& polygons, quint32 level) {
   int count = 0;
   int poiErrors = 0;
   int ptErrors = 0;
@@ -3237,7 +3238,8 @@ void ImgDump::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygon
     }
     tmpPoints += "[END]\n\n";
 
-    dstFile.write(codec->fromUnicode(tmpPoints));
+    // dstFile.write(codec->fromUnicode(tmpPoints));
+    dstFile.write(tmpPoints.toUtf8());
     dstFile.flush();
   }
 
@@ -3275,7 +3277,8 @@ void ImgDump::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygon
     }
     tmpPois += "[END]\n\n";
 
-    dstFile.write(codec->fromUnicode(tmpPois));
+    // dstFile.write(codec->fromUnicode(tmpPois));
+    dstFile.write(tmpPois.toUtf8());
     dstFile.flush();
   }
 
@@ -3314,7 +3317,8 @@ void ImgDump::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygon
     tmpPolylines += QString("Data%1=%2\n").arg(level).arg(output);
     tmpPolylines += "[END]\n\n";
 
-    dstFile.write(codec->fromUnicode(tmpPolylines));
+    // dstFile.write(codec->fromUnicode(tmpPolylines));
+    dstFile.write(tmpPolylines.toUtf8());
     dstFile.flush();
   }
 
@@ -3347,7 +3351,8 @@ void ImgDump::writeMp(QFile& dstFile, polytype_t& polylines, polytype_t& polygon
     tmpPolygons += QString("Data%1=%2\n").arg(level).arg(output);
     tmpPolygons += "[END]\n\n";
 
-    dstFile.write(codec->fromUnicode(tmpPolygons));
+    // dstFile.write(codec->fromUnicode(tmpPolygons));
+    dstFile.write(tmpPolygons.toUtf8());
     dstFile.flush();
   }
 
@@ -3454,9 +3459,9 @@ QString ImgDump::convLnDegStr(const QPolygonF& polyline, bool isLine, bool wkt) 
 
     // @investigate: cut the polygon if it forms a figure eight?
     // @investigate: removes the last point if it matches the first one (closed polygon)
-    // if (isLine == false && pointCount > 2 && point == firstPoint) {
-    //   break;
-    // }
+    if (isLine == false && pointCount > 2 && point == firstPoint) {
+      break;
+    }
 
 #ifdef SANITY_CHECK
     if (pointCount && isSuspiciousSegment(pointPrev, point)) {
@@ -3483,12 +3488,18 @@ QString ImgDump::convLnDegStr(const QPolygonF& polyline, bool isLine, bool wkt) 
     return "";
   }
 
+  // if (wkt && !isLine) {
+  //   result += ", " + convPtDegStr(firstPoint, wkt);
+  // }
+
   return result;
 }
 
 void ImgDump::writeHeader(QFile& dstFile, const submap_t& submap) {
   if (csvOutput) {
-    dstFile.write(codec->fromUnicode("Feature;Type;Label;Level;WKT;RoadID\n"));
+    const QString headerStr = "Feature\tType\tLabel\tLevel\tWKT\tRoadID\n";
+    // dstFile.write(codec->fromUnicode(headerStr));
+    dstFile.write(headerStr.toUtf8());
     dstFile.flush();
     return;
   }
@@ -3539,7 +3550,8 @@ void ImgDump::writeHeader(QFile& dstFile, const submap_t& submap) {
                              .arg(levelsStr)
                              .arg(zoomsStr);
 
-  dstFile.write(codec->fromUnicode(headerStr));
+  // dstFile.write(codec->fromUnicode(headerStr));
+  dstFile.write(headerStr.toUtf8());
   dstFile.flush();
 }
 
