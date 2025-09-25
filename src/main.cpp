@@ -20,6 +20,10 @@
 #include <QtCore5Compat/QTextCodec>
 #include <iostream>
 
+#ifdef _DEBUG
+#include <crtdbg.h>
+#endif
+
 #define SANITY_CHECK
 #define DEBUG_SHOW_MAPLEVELS
 // #define DEBUG_SHOW_POLY_DATA_SUBDIV
@@ -1439,7 +1443,7 @@ class ImgDump : public QCoreApplication {
   void readImg(QFile& srcFile, submap_t& submap);
   void readGmp(QFile& srcFile, submap_t& submap);
   void readSubmaps(QFile& srcFile);
-  void readSubmapArea(submap_t& submap);
+  // void readSubmapArea(submap_t& submap);
   void parseMapLevels(QFile& srcFile, submap_t& submap);
   tre0_t readCopyrights(QFile& srcFile, quint32 baseOffset, quint32 limitOffset);
   void parseSubdivInfo(QFile& srcFile, submap_t& submap);
@@ -1448,8 +1452,8 @@ class ImgDump : public QCoreApplication {
   void readProductInfo(QDataStream& stream);
   void readMapInfo(QDataStream& stream);
   QString readRawString(QDataStream& stream);
-  void processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap);
-  void readShapes(QFile& srcFile);
+  void processObjects(QFile& dstFile, QFile& srcFile, const submap_t& submap);
+  void readObjects(QFile& srcFile);
   void decodeRgn(QFile& dstFile, QFile& srcFile, const subdiv_t& subdiv, StrTbl* strtbl, const QByteArray& rgndata);
   void writeCsv(QFile& dstFile, pointtype_t& points, pointtype_t& pois, polytype_t& polylines, polytype_t& polygons, quint32 level);
   void writeMp(QFile& dstFile, pointtype_t& points, pointtype_t& pois, polytype_t& polylines, polytype_t& polygons, quint32 level);
@@ -1516,7 +1520,7 @@ class ImgDump : public QCoreApplication {
   int totalPo2 = 0;
   int totalLn2 = 0;
   int totalPg2 = 0;
-  int totalShapesDecoded = 0;
+  int totalObjectsDecoded = 0;
   int totalPtFailed = 0;
   int totalPoFailed = 0;
   int totalLnFailed = 0;
@@ -1630,7 +1634,7 @@ ImgDump::ImgDump(int& argc, char** argv) : QCoreApplication(argc, argv) {
 
     readFat(srcFile);
     readSubmaps(srcFile);
-    readShapes(srcFile);
+    readObjects(srcFile);
   } catch (const Exception& e) {
     qDebug() << "Fatal error:" << e.msg;
   }
@@ -1967,33 +1971,33 @@ void ImgDump::readFat(QFile& srcFile) {
     }
 
     if (FATBlock.size != 0) {
-      char nameStr[sizeof(FATBlock.name) + 1] = {0};
-      memcpy(nameStr, FATBlock.name, sizeof(FATBlock.name));
+      char submapStr[sizeof(FATBlock.name) + 1] = {0};
+      memcpy(submapStr, FATBlock.name, sizeof(FATBlock.name));
 
-      char typeStr[sizeof(FATBlock.type) + 1] = {0};
-      memcpy(typeStr, FATBlock.type, sizeof(FATBlock.type));
+      char subfileStr[sizeof(FATBlock.type) + 1] = {0};
+      memcpy(subfileStr, FATBlock.type, sizeof(FATBlock.type));
 
-      if (nameStr[0] == 0x20) {
-        qDebug() << "Skip empty subfile type:" << nameStr << typeStr;
-      } else if (submaps.contains(nameStr) && strcmp(typeStr, "GMP") != 0 && submaps[nameStr].subfiles.keys().contains(typeStr)) {
+      if (submapStr[0] == 0x20) {
+        qDebug() << "Skip empty subfile type:" << submapStr << subfileStr;
+        // } else if (strcmp(submapStr, "00235022") != 0) {
+        //   qDebug() << "Skip subfile by name:" << submapStr;
+      } else if (submaps.contains(submapStr) && strcmp(subfileStr, "GMP") != 0 && submaps[submapStr].subfiles.keys().contains(subfileStr)) {
         // or check FATBlock.part > 0x00 ?
-        qDebug() << "Skip duplicate subfile type:" << nameStr << typeStr;
-      } else if (strcmp(typeStr, "SRT") == 0 || strcmp(typeStr, "MDR") == 0 || strcmp(typeStr, "MD2") == 0 || strcmp(typeStr, "TYP") == 0) {
-        qDebug() << "Skip useless subfile type:" << nameStr << typeStr;
-
-        // } else if (strcmp(typeStr, "NET") == 0) {  //|| strcmp(typeStr, "NOD") == 0 || strcmp(typeStr, "LBL") == 0 || strcmp(typeStr, "MPS") == 0) {
-        // NET subfile: throwing an exception
-        // qDebug() << "Skip subfile type (for debug purpose):" << nameStr << typeStr;
+        qDebug() << "Skip duplicate subfile type:" << submapStr << subfileStr;
+      } else if (strcmp(subfileStr, "SRT") == 0 || strcmp(subfileStr, "MDR") == 0 || strcmp(subfileStr, "MD2") == 0 || strcmp(subfileStr, "TYP") == 0) {
+        qDebug() << "Skip useless subfile type:" << submapStr << subfileStr;
+        // } else if (strcmp(subfileStr, "NET") == 0 || strcmp(subfileStr, "NOD") == 0 || strcmp(subfileStr, "LBL") == 0 || strcmp(subfileStr, "MPS") == 0) {
+        //   qDebug() << "Skip subfile type (for debug purpose):" << submapStr << subfileStr;
       } else {
-        submap_t& submap = submaps[nameStr];
-        submap.name = nameStr;
+        submap_t& submap = submaps[submapStr];
+        submap.name = submapStr;
 
-        submap_subfile_t& part = submap.subfiles[typeStr];
+        submap_subfile_t& part = submap.subfiles[subfileStr];
         part.size = gar_load(quint32, FATBlock.size);
         part.offset = quint32(gar_load(uint16_t, FATBlock.blocks[0]) * blocksize);
 
         // @todo: more checks, maybe NT or checl 0x0D flags for bit 0x80
-        submap.isPseudoNT = strcmp(typeStr, "GMP") == 0;
+        submap.isPseudoNT = strcmp(subfileStr, "GMP") == 0;
       }
     }
 
@@ -2310,6 +2314,16 @@ void ImgDump::readSubmaps(QFile& srcFile) {
   maparea = QRectF();
   qDebug() << "Submaps count:" << submaps.size();
 
+  if (debugInfo) {
+    print("--- Subfiles ---\n");
+    for (auto& submap : submaps) {
+      for (const auto& [subfile, part] : submap.subfiles.asKeyValueRange()) {
+        print("%s %s %08X %08X %08X %08X %08X %08X\n", submap.name.toLocal8Bit().data(), subfile.toLocal8Bit().data(), part.offset, part.size, part.hdrOffset, part.hdrSize,
+              part.bodyOffset, part.bodySize);
+      }
+    }
+  }
+
   for (auto& submap : submaps) {
     if (submap.isPseudoNT) {
       readGmp(srcFile, submap);
@@ -2326,16 +2340,6 @@ void ImgDump::readSubmaps(QFile& srcFile) {
     parseSubdivInfo(srcFile, submap);
     parseSubdivInfoExt(srcFile, submap);
     parseStringTable(srcFile, submap);
-  }
-
-  if (debugInfo) {
-    print("--- Subfiles ---\n");
-    for (auto& submap : submaps) {
-      for (const auto& [subfile, part] : submap.subfiles.asKeyValueRange()) {
-        print("%s %s %08X %08X %08X %08X %08X %08X\n", submap.name.toLocal8Bit().data(), subfile.toLocal8Bit().data(), part.offset, part.size, part.hdrOffset, part.hdrSize,
-              part.bodyOffset, part.bodySize);
-      }
-    }
   }
 
   fflush(stdout);
@@ -2397,6 +2401,7 @@ ImgDump::tre0_t ImgDump::readCopyrights(QFile& srcFile, quint32 baseOffset, quin
   return result;
 }
 
+/*
 void ImgDump::readSubmapArea(submap_t& submap) {
   // read map boundaries from header
   submap.north = GARMIN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.northbound));
@@ -2420,6 +2425,7 @@ void ImgDump::readSubmapArea(submap_t& submap) {
     maparea = maparea.united(submap.area);
   }
 }
+*/
 
 void ImgDump::parseSubdivInfo(QFile& srcFile, submap_t& submap) {
   quint32 start = submap.subfiles[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.size;
@@ -2460,8 +2466,11 @@ void ImgDump::parseSubdivInfo(QFile& srcFile, submap_t& submap) {
     if (subdiv_prev != submap.subdivs.end()) {
       subdiv_prev->rgn_end = subdiv->rgn_start;
     } else {
-      subdiv_prev->rgn_end = 0;
+      // subdiv_prev->rgn_end = 0;  // @crash
+      //_CrtCheckMemory();
+      subdiv->rgn_end = 0;  // @bugfix
     }
+    subdiv_prev = subdiv;
 
     subdiv->hasPoints = pTre2N->elements & 0x10;
     subdiv->hasPois = pTre2N->elements & 0x20;
@@ -2512,6 +2521,10 @@ void ImgDump::parseSubdivInfo(QFile& srcFile, submap_t& submap) {
     subdiv->next = 0;
     subdiv->terminate = TRE_SUBDIV_TERM(pTre2L);
     subdiv->rgn_start = pTre2L->rgn_offset[0] | pTre2L->rgn_offset[1] << 8 | pTre2L->rgn_offset[2] << 16 | (pTre2L->elements & 0x0F) << 24;
+    if (subdiv->rgn_start + rgnoff > submap.hdrRGN.rgn1_length) {
+      qDebug() << "[WARN] Block size overflow?" << Qt::hex << subdiv->rgn_start + rgnoff << submap.hdrRGN.rgn1_length;
+      break;
+    }
     subdiv->rgn_start += rgnoff;
 
     subdiv_prev->rgn_end = subdiv->rgn_start;
@@ -2640,14 +2653,13 @@ void ImgDump::parseStringTable(QFile& srcFile, submap_t& submap) {
   }
 }
 
-void ImgDump::readShapes(QFile& srcFile) {
+void ImgDump::readObjects(QFile& srcFile) {
   // int numThreads = 4;
 
   int numThreads = 1;
   if (numThreads > 1) {
     QThreadPool::globalInstance()->setMaxThreadCount(numThreads);
   }
-  qDebug() << "Submaps count:" << submaps.size();
 
   bool isFirst = true;
   QFile dstFile;
@@ -2660,14 +2672,15 @@ void ImgDump::readShapes(QFile& srcFile) {
     }
 
     QFileInfo ofInfo(outputFile);
-    QString fileName = QString("%1%2.%3").arg(ofInfo.baseName()).arg(splitSubmaps ? "-" + submap.name : "").arg(ofInfo.suffix());
+    QString dir = ofInfo.path();
+    QString fileName = QString("%1\\%2%3.%4").arg(dir).arg(ofInfo.baseName()).arg(splitSubmaps ? "-" + submap.name : "").arg(ofInfo.suffix());
     if (dstFile.isOpen()) {
       QFileInfo fi(dstFile);
       const bool isOversize = fi.size() > maxFileSize;
       if (!csvOutput) {
         if (isOversize) {
           ++filePart;
-          fileName = QString("%1.part%2.%3").arg(ofInfo.baseName()).arg(filePart + 1).arg(ofInfo.suffix());
+          fileName = QString("%1\\%2.part%3.%4").arg(dir).arg(ofInfo.baseName()).arg(filePart + 1).arg(ofInfo.suffix());
         }
         if (splitSubmaps || isOversize) {
           dstFile.flush();
@@ -2679,7 +2692,7 @@ void ImgDump::readShapes(QFile& srcFile) {
           writeHeader(dstFile, submap);
 
           if (isOversize && filePart == 1) {
-            const QString firstPartName = QString("%1-part%2.%3").arg(ofInfo.baseName()).arg(filePart).arg(ofInfo.suffix());
+            const QString firstPartName = QString("%1\\%2-part%3.%4").arg(dir).arg(ofInfo.baseName()).arg(filePart).arg(ofInfo.suffix());
             if (QFile::exists(firstPartName)) {
               QFile::remove(firstPartName);
             }
@@ -2701,9 +2714,9 @@ void ImgDump::readShapes(QFile& srcFile) {
     }
 
     if (numThreads == 1) {
-      processShapes(dstFile, srcFile, submap);
+      processObjects(dstFile, srcFile, submap);
     } else {
-      CSubmapTask* task = new CSubmapTask([this, &dstFile, &srcFile, &submap]() { processShapes(dstFile, srcFile, submap); });
+      CSubmapTask* task = new CSubmapTask([this, &dstFile, &srcFile, &submap]() { processObjects(dstFile, srcFile, submap); });
       QThreadPool::globalInstance()->start(task);
     }
 
@@ -2722,7 +2735,7 @@ void ImgDump::readShapes(QFile& srcFile) {
         infoSkipDupePoint = 0;
       }
       if (warnSkipOutside) {
-        qDebug() << "[WARN] Number of shapes outside subdiv area:" << warnSkipOutside;
+        qDebug() << "[WARN] Number of objects outside subdiv area:" << warnSkipOutside;
         warnSkipOutside = 0;
       }
       if (warnSuspiciousSegment) {
@@ -2738,7 +2751,7 @@ void ImgDump::readShapes(QFile& srcFile) {
         warnPolyOversize = 0;
       }
       if (warnInvalidType) {
-        qDebug() << "[WARN] Number of invalid shapes type:" << warnInvalidType;
+        qDebug() << "[WARN] Number of invalid objects type:" << warnInvalidType;
         warnInvalidType = 0;
       }
       if (warnInvalidCoords) {
@@ -2766,7 +2779,7 @@ void ImgDump::readShapes(QFile& srcFile) {
   }
 }
 
-void ImgDump::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& submap) {
+void ImgDump::processObjects(QFile& dstFile, QFile& srcFile, const submap_t& submap) {
   try {
     QByteArray rgnData;
     if (submap.isPseudoNT) {
@@ -2793,9 +2806,9 @@ void ImgDump::processShapes(QFile& dstFile, QFile& srcFile, const submap_t& subm
       }
       decodeRgn(dstFile, srcFile, subdiv, submap.strtbl, rgnData);
     }
-    totalShapesDecoded = totalPt + totalPo + totalLn + totalPg + totalPt2 + totalPo2 + totalLn2 + totalPg2;
-    qDebug().noquote() << QString("Total decoded shapes: %1 | RGN: %2 %3 %4 %5 %6 %7 %8 %9 | Shapes: %10 %11 %12")
-                              .arg(totalShapesDecoded, -8)
+    totalObjectsDecoded = totalPt + totalPo + totalLn + totalPg + totalPt2 + totalPo2 + totalLn2 + totalPg2;
+    qDebug().noquote() << QString("Total decoded objects: %1 | RGN: %2 %3 %4 %5 %6 %7 %8 %9 | Objects: %10 %11 %12")
+                              .arg(totalObjectsDecoded, -8)
                               .arg(totalPt, -8)
                               .arg(totalPo, -8)
                               .arg(totalLn, -8)
@@ -3238,8 +3251,8 @@ void ImgDump::writeMp(QFile& dstFile, pointtype_t& points, pointtype_t& pois, po
     }
     tmpPoints += "[END]\n\n";
 
-    // dstFile.write(codec->fromUnicode(tmpPoints));
-    dstFile.write(tmpPoints.toUtf8());
+    dstFile.write(codec->fromUnicode(tmpPoints));
+    // dstFile.write(tmpPoints.toUtf8());
     dstFile.flush();
   }
 
@@ -3277,8 +3290,8 @@ void ImgDump::writeMp(QFile& dstFile, pointtype_t& points, pointtype_t& pois, po
     }
     tmpPois += "[END]\n\n";
 
-    // dstFile.write(codec->fromUnicode(tmpPois));
-    dstFile.write(tmpPois.toUtf8());
+    dstFile.write(codec->fromUnicode(tmpPois));
+    // dstFile.write(tmpPois.toUtf8());
     dstFile.flush();
   }
 
@@ -3317,8 +3330,8 @@ void ImgDump::writeMp(QFile& dstFile, pointtype_t& points, pointtype_t& pois, po
     tmpPolylines += QString("Data%1=%2\n").arg(level).arg(output);
     tmpPolylines += "[END]\n\n";
 
-    // dstFile.write(codec->fromUnicode(tmpPolylines));
-    dstFile.write(tmpPolylines.toUtf8());
+    dstFile.write(codec->fromUnicode(tmpPolylines));
+    // dstFile.write(tmpPolylines.toUtf8());
     dstFile.flush();
   }
 
@@ -3351,8 +3364,8 @@ void ImgDump::writeMp(QFile& dstFile, pointtype_t& points, pointtype_t& pois, po
     tmpPolygons += QString("Data%1=%2\n").arg(level).arg(output);
     tmpPolygons += "[END]\n\n";
 
-    // dstFile.write(codec->fromUnicode(tmpPolygons));
-    dstFile.write(tmpPolygons.toUtf8());
+    dstFile.write(codec->fromUnicode(tmpPolygons));
+    // dstFile.write(tmpPolygons.toUtf8());
     dstFile.flush();
   }
 
@@ -3550,12 +3563,19 @@ void ImgDump::writeHeader(QFile& dstFile, const submap_t& submap) {
                              .arg(levelsStr)
                              .arg(zoomsStr);
 
-  // dstFile.write(codec->fromUnicode(headerStr));
-  dstFile.write(headerStr.toUtf8());
+  dstFile.write(codec->fromUnicode(headerStr));
+  // dstFile.write(headerStr.toUtf8());
   dstFile.flush();
 }
 
 int main(int argc, char* argv[]) {
+#ifdef _DEBUG
+  // check for memory leaks & heap corruption
+  _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+
+  //_CrtSetDbgFlag(_CRTDBG_CHECK_ALWAYS_DF);
+#endif
+
   int result = 0;
   try {
     QElapsedTimer timerMain;
