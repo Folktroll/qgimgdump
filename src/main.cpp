@@ -30,13 +30,11 @@
 // #define DEBUG_SHOW_POLY_DATA_DECODE
 // #define DEBUG_SHOW_POLY_DATA_DECODE_EXT
 
-// 1 garmin unit = 360 / MAX_FLOAT_PREC
-
 #define D180 180
 #define MAX_FLOAT_PREC qPow(2.0, 24.0)
-#define GARMIN_UNIT (2 * D180) / MAX_FLOAT_PREC
-#define GARMIN_DEG(x) ((x) < 0x800000 ? (double)(x) * GARMIN_UNIT : (double)((x) - 0x1000000) * GARMIN_UNIT)
-#define GARMIN_RAD(x) ((x) < 0x800000 ? (double)(x) * (2 * M_PI) / MAX_FLOAT_PREC : (double)((x) - 0x1000000) * (2 * M_PI) / MAX_FLOAT_PREC)
+#define GRMN_UNIT (2 * D180) / MAX_FLOAT_PREC
+#define GRMN_DEG(x) ((x) < 0x800000 ? (double)(x) * GRMN_UNIT : (double)((x) - 0x1000000) * GRMN_UNIT)
+#define GRMN_RAD(x) ((x) < 0x800000 ? (double)(x) * (2 * M_PI) / MAX_FLOAT_PREC : (double)((x) - 0x1000000) * (2 * M_PI) / MAX_FLOAT_PREC)
 
 #define gar_load(t, x) (t)(x)
 #define gar_ptr_load(t, p) __gar_ptr_load_##t((const uint8_t*)(p))
@@ -85,7 +83,7 @@ void printUInt32(const char* label, quint32 val) {
 
 void printUInt24(const char* label, quint24 val) {
   qint32 tmp = val[0] | val[1] << 8 | val[2] << 16;
-  printf("%30s %f (0x%06X, %i)\n", label, GARMIN_DEG(tmp), tmp, tmp);
+  printf("%30s %f (0x%06X, %i)\n", label, GRMN_DEG(tmp), tmp, tmp);
 }
 
 void printArrayUInt8(const char* label, quint8* array, int size) {
@@ -512,7 +510,7 @@ quint32 RgnPoint::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, co
 
   qint32 x1 = ((qint32)dLng << shift) + iCenterLon;
   qint32 y1 = ((qint32)dLat << shift) + iCenterLat;
-  pos = QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+  pos = QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
 
   if (hasSubType) {
     type |= *pData;
@@ -554,7 +552,7 @@ quint32 RgnPoint::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift,
 
   x1 = ((qint32)dLng << shift) + iCenterLon;
   y1 = ((qint32)dLat << shift) + iCenterLat;
-  pos = QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+  pos = QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
 
   if (subtype & 0x20) {
     byte_size += 3;
@@ -852,12 +850,12 @@ quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, boo
   }
 
   // PJ_UV xy;
-  // xy.u = GARMIN_RAD(x1);
-  // xy.v = GARMIN_RAD(y1);
+  // xy.u = GRMN_RAD(x1);
+  // xy.v = GRMN_RAD(y1);
   // u << xy.u;
   // v << xy.v;
   // points << QPointF(qRadiansToDegrees(xy.u), qRadiansToDegrees(xy.v));
-  points << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+  points << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
 
   // next points
   while (sr.get(x, y)) {
@@ -868,12 +866,12 @@ quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, boo
       x1 = 0x7fffff;
     }
 
-    // xy.u = GARMIN_RAD(x1);
-    // xy.v = GARMIN_RAD(y1);
+    // xy.u = GRMN_RAD(x1);
+    // xy.v = GRMN_RAD(y1);
     // u << xy.u;
     // v << xy.v;
     // points << QPointF(qRadiansToDegrees(xy.u), qRadiansToDegrees(xy.v));
-    points << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+    points << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
   }
 
   // if (maxVecSize < u.size()) {
@@ -968,7 +966,7 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
     x1 = 0x7fffff;
   }
 
-  points << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+  points << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
 
   // next points
   while (sr.get(x, y)) {
@@ -979,12 +977,12 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
       x1 = 0x7fffff;
     }
 
-    // xy.u = GARMIN_RAD(x1);
-    // xy.v = GARMIN_RAD(y1);
+    // xy.u = GRMN_RAD(x1);
+    // xy.v = GRMN_RAD(y1);
     // u << xy.u;
     // v << xy.v;
     // points << QPointF(qRadiansToDegrees(xy.u), qRadiansToDegrees(xy.v));
-    points << QPointF(GARMIN_RAD(x1), GARMIN_RAD(y1));
+    points << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
   }
 
   if (hasExtLabel) {
@@ -1088,39 +1086,39 @@ class ImgDump : public QCoreApplication {
   typedef QVector<RgnPoint> pointtype_t;
 
 #pragma pack(1)
-  // Garmin IMG file header structure, to the start of the FAT blocks
+  // IMG file header structure, to the start of the FAT blocks
   struct gmapsupp_imghdr_t {
     quint8 xorByte = 0;              // 0000
-    quint8 x0001_0007[7] = {0};      // 0001..0007
+    quint8 x0001_0007[7] = {0};      // 0001_0007
     quint16 version = 0;             // 0008
     quint8 upMonth = 0;              // 000A
     quint8 upYear = 0;               // 000B
-    quint8 x000C_000D[2] = {0};      // 000C..000D
+    quint8 x000C_000D[2] = {0};      // 000C_000D
     quint8 supp = 0;                 // 000E
     quint8 checksum = 0;             // 000F
-    char signature[7] = {0};         // 0010..0016
+    char signature[7] = {0};         // 0010_0016
     quint8 x0017 = 0x2;              // 0017
-    quint16 sectors1 = 0;            // 0018..0019
-    quint16 heads1 = 0;              // 001A..001B
-    quint16 cylinders = 0;           // 001C..001D
-    quint8 x001E_0038[27] = {0};     // 001E..0038
-    qint16 year = 0;                 // 0039..003A
+    quint16 sectors1 = 0;            // 0018_0019
+    quint16 heads1 = 0;              // 001A_001B
+    quint16 cylinders = 0;           // 001C_001D
+    quint8 x001E_0038[27] = {0};     // 001E_0038
+    qint16 year = 0;                 // 0039_003A
     qint8 month = 0;                 // 003B
     qint8 day = 0;                   // 003C
     qint8 hour = 0;                  // 003D
     qint8 minute = 0;                // 003E
     qint8 second = 0;                // 003F
     qint8 offsetFAT = 0;             // 0040
-    char identifier[7];              // 0041..0047
+    char identifier[7];              // 0041_0047
     quint8 x0048;                    // 0048
-    char desc1[20];                  // 0049..005C
-    quint16 head2 = 0;               // 005D..005E
-    quint16 sectors2 = 0;            // 005F..0060
+    char desc1[20];                  // 0049_005C
+    quint16 head2 = 0;               // 005D_005E
+    quint16 sectors2 = 0;            // 005F_0060
     quint8 e1 = 0;                   // 0061
     quint8 e2 = 0;                   // 0062
-    quint16 nBlocks1;                // 0063..0064
-    char desc2[30];                  // 0065..0082
-    quint8 x0083_01BE[0x13C] = {0};  // 0083..01BE
+    quint16 nBlocks1;                // 0063_0064
+    char desc2[30];                  // 0065_0082
+    quint8 x0083_01BE[0x13C] = {0};  // 0083_01BE
     quint8 startHead = 0;            // 01BF
     quint8 startSector = 1;          // 01C0
     quint8 startCylinder = 0;        // 01C1
@@ -1128,31 +1126,31 @@ class ImgDump : public QCoreApplication {
     quint8 endHead = 0;              // 01C3
     quint8 endSector = 0;            // 01C4
     quint8 endCylinder = 0;          // 01C5
-    quint32 relSectors = 0;          // 01C6..01C9
-    quint32 nSectors = 0;            // 01CA..01CD
-    quint8 x01CE_01FD[0x30] = {0};   // 01CE..01FD
-    quint16 terminator = 0xAA55;     // 01FE..01FF
+    quint32 relSectors = 0;          // 01C6_01C9
+    quint32 nSectors = 0;            // 01CA_01CD
+    quint8 x01CE_01FD[0x30] = {0};   // 01CE_01FD
+    quint16 terminator = 0xAA55;     // 01FE_01FF
     quint32 blocksize() { return 1 << (e1 + e2); }
     void print();
   };
 
   struct FATBlock_t {
     quint8 flag;            // 0000
-    char name[8];           // 0001..0008
-    char type[3];           // 0009..000B
-    quint32 size;           // 000C..000F
-    quint16 part;           // 0010..0011
-    quint8 x0012_001F[14];  // 0012..001F
-    quint16 blocks[240];    // 0020..01FF
+    char name[8];           // 0001_0008
+    char type[3];           // 0009_000B
+    quint32 size;           // 000C_000F
+    quint16 part;           // 0010_0011
+    quint8 x0012_001F[14];  // 0012_001F
+    quint16 blocks[240];    // 0020_01FF
   };
 
   // common header for all subtypes
   struct submap_hdr_t {
-    quint16 size;   // 0000..0001
-    char type[10];  // 0002..000B
+    quint16 size;   // 0000_0001
+    char type[10];  // 0002_000B
     quint8 x000C;   // 000C
     quint8 flag;    // 000D
-    qint16 year;    // 000E..000F
+    qint16 year;    // 000E_000F
     qint8 month;    // 0010
     qint8 day;      // 0011
     qint8 hour;     // 0012
@@ -1162,169 +1160,169 @@ class ImgDump : public QCoreApplication {
   };
 
   struct gmp_hdr_t : public submap_hdr_t {
-    quint8 x0015_0018[4];  // 0015..0018
-    quint32 tre_offset;    // 0019..001C
-    quint32 rgn_offset;    // 001D..0020
-    quint32 lbl_offset;    // 0021..0024
-    quint32 net_offset;    // 0025..0028
-    quint32 nod_offset;    // 0029..002E
-    quint32 dem_offset;    // 002D..0030
-    quint32 mar_offset;    // 0031..0034
-    quint32 met_offset;    // 0035..0038
+    quint8 x0015_0018[4];  // 0015_0018
+    quint32 tre_offset;    // 0019_001C
+    quint32 rgn_offset;    // 001D_0020
+    quint32 lbl_offset;    // 0021_0024
+    quint32 net_offset;    // 0025_0028
+    quint32 nod_offset;    // 0029_002E
+    quint32 dem_offset;    // 002D_0030
+    quint32 mar_offset;    // 0031_0034
+    quint32 met_offset;    // 0035_0038
     void print();
   };
 
   struct hdr_tre_t : public submap_hdr_t {
-    quint24 northbound = {0};            // 0015..0017 - max lat
-    quint24 eastbound = {0};             // 0018..001A - max long
-    quint24 southbound = {0};            // 001B..001D - min lat
-    quint24 westbound = {0};             // 001E..0020 - min long, cant be +180
-    quint32 tre1_offset = 0;             // 0021..0024 - map levels pos
-    quint32 tre1_size = 0;               // 0025..0028
-    quint32 tre2_offset = 0;             // 0029..002C - subdiv pos
-    quint32 tre2_size = 0;               // 002D..0030
-    quint32 tre3_offset = 0;             // 0031..0034 - TRE-body relative offset (pseudo-NT) or copyright offset in TRE
-    quint32 tre3_size = 0;               // 0035..0038
-    quint16 tre3_rec_size = 0;           // 0039..003A
-    quint8 x003B_003E[4] = {0};          // 003B..003E
-    quint8 POI_flags = 0;                // 003F       - poi display flags
-    quint24 render_prio = {0x14, 0, 0};  // 0040..0042 - display priority
-    quint8 x0043_0049[7] = {0};          // 0043..0049
-    quint32 tre4_offset = 0;             // 004A..004D - polyline overview
-    quint32 tre4_size = 0;               // 004E..0051
-    quint16 tre4_rec_size = 0;           // 0052..0053
-    quint8 x0054_0057[4] = {0};          // 0054..0057
-    quint32 tre5_offset = 0;             // 0058..005B - polygon overview
-    quint32 tre5_size = 0;               // 005C..005F
-    quint16 tre5_rec_size = 0;           // 0060..0061
-    quint8 x0062_0065[4] = {0};          // 0062..0065
-    quint32 tre6_offset = 0;             // 0066..0069 - points overview
-    quint32 tre6_size = 0;               // 006A..006D
-    quint16 tre6_rec_size = 0;           // 006E..006F
-    quint8 x0070_0073[4] = {0};          // 0070..0073
-    quint32 map_id = 0;                  // 0074..0077
-    quint8 x0078_007B[4] = {0};          // 0078..007B
-    quint32 tre7_offset = 0;             // 007C..007F - extended type offsets
-    quint32 tre7_size = 0;               // 0080..0083
-    quint16 tre7_rec_size = 0;           // 0084..0085
-    quint8 x0086_0089[4] = {0};          // 0086..0089 - 0x01 0x00 0x00 0x00
-    quint32 tre8_offset = 0;             // 008A..008D - extended type overview: ln, pg, po; sorted by type (1 type 1 levels 1 subtype)
-    quint32 tre8_size = 0;               // 008E..0091
-    quint16 tre8_rec_size = 0;           // 0092..0093
-    quint16 polyl2_types_num = 0;        // 0094..0095 - num ext type ln
-    quint16 polyg2_types_num = 0;        // 0096..0097 - num ext type pg
-    quint16 poi2_types_num = 0;          // 0098..0099 - num ext type pt
-    quint8 key[16] = {0};                // 009A..00A5 - map values
-    quint8 x00AA_00AD[4] = {0};          // 00AA..00AD
-    quint32 tre9_offset;                 // 00AE..00B1
-    quint32 tre9_size;                   // 00B2..00B5
-    quint16 tre9_rec_size;               // 00B6..00B7
-    quint8 x00B8_00BB[4] = {0};          // 00B8..00BB
-    quint32 tre10_offset;                // 00BC..00BF
-    quint32 tre10_size;                  // 00C0..00C3
-    quint16 tre10_rec_size;              // 00C4..00C5
-    quint8 x00C6_00CE[9] = {0};          // 00C6..00CE
-    quint32 map_id2;                     // 00CF..00D2 - map id 2
+    quint24 northbound = {0};            // 0015_0017 - max lat
+    quint24 eastbound = {0};             // 0018_001A - max long
+    quint24 southbound = {0};            // 001B_001D - min lat
+    quint24 westbound = {0};             // 001E_0020 - min long, cant be +180
+    quint32 tre1_offset = 0;             // 0021_0024 - map levels pos
+    quint32 tre1_size = 0;               // 0025_0028
+    quint32 tre2_offset = 0;             // 0029_002C - subdiv pos
+    quint32 tre2_size = 0;               // 002D_0030
+    quint32 tre3_offset = 0;             // 0031_0034 - TRE-body relative offset (new format) or copyright offset in TRE
+    quint32 tre3_size = 0;               // 0035_0038
+    quint16 tre3_rec_size = 0;           // 0039_003A
+    quint8 x003B_003E[4] = {0};          // 003B_003E
+    quint8 POI_flags = 0;                // 003F      - poi display flags
+    quint24 render_prio = {0x14, 0, 0};  // 0040_0042 - display priority
+    quint8 x0043_0049[7] = {0};          // 0043_0049
+    quint32 tre4_offset = 0;             // 004A_004D - polyline overview
+    quint32 tre4_size = 0;               // 004E_0051
+    quint16 tre4_rec_size = 0;           // 0052_0053
+    quint8 x0054_0057[4] = {0};          // 0054_0057
+    quint32 tre5_offset = 0;             // 0058_005B - polygon overview
+    quint32 tre5_size = 0;               // 005C_005F
+    quint16 tre5_rec_size = 0;           // 0060_0061
+    quint8 x0062_0065[4] = {0};          // 0062_0065
+    quint32 tre6_offset = 0;             // 0066_0069 - points overview
+    quint32 tre6_size = 0;               // 006A_006D
+    quint16 tre6_rec_size = 0;           // 006E_006F
+    quint8 x0070_0073[4] = {0};          // 0070_0073
+    quint32 map_id = 0;                  // 0074_0077
+    quint8 x0078_007B[4] = {0};          // 0078_007B
+    quint32 tre7_offset = 0;             // 007C_007F - extended type offsets
+    quint32 tre7_size = 0;               // 0080_0083
+    quint16 tre7_rec_size = 0;           // 0084_0085
+    quint8 x0086_0089[4] = {0};          // 0086_0089 - 0x01 0x00 0x00 0x00
+    quint32 tre8_offset = 0;             // 008A_008D - extended type overview: ln, pg, po; sorted by type (1 type 1 levels 1 subtype)
+    quint32 tre8_size = 0;               // 008E_0091
+    quint16 tre8_rec_size = 0;           // 0092_0093
+    quint16 polyl2_types_num = 0;        // 0094_0095 - num ext type ln
+    quint16 polyg2_types_num = 0;        // 0096_0097 - num ext type pg
+    quint16 poi2_types_num = 0;          // 0098_0099 - num ext type pt
+    quint8 key[16] = {0};                // 009A_00A5 - map values
+    quint8 x00AA_00AD[4] = {0};          // 00AA_00AD
+    quint32 tre9_offset;                 // 00AE_00B1
+    quint32 tre9_size;                   // 00B2_00B5
+    quint16 tre9_rec_size;               // 00B6_00B7
+    quint8 x00B8_00BB[4] = {0};          // 00B8_00BB
+    quint32 tre10_offset;                // 00BC_00BF
+    quint32 tre10_size;                  // 00C0_00C3
+    quint16 tre10_rec_size;              // 00C4_00C5
+    quint8 x00C6_00CE[9] = {0};          // 00C6_00CE
+    quint32 map_id2;                     // 00CF_00D2 - map id 2
     void print(quint32 offset);
   };
 
   struct hdr_rgn_t : public submap_hdr_t {
-    quint32 rgn1_offset = 0;      // 0015..0018 - RGN-body relative offset (pseudo-NT)
-    quint32 rgn1_length = 0;      // 0019..001C
-    quint32 pg2_offset = 0;       // 001D..0020
-    quint32 pg2_length = 0;       // 0021..0024
-    quint8 x0025_0038[20] = {0};  // 0025..0038
-    quint32 ln2_offset = 0;       // 0039..003C
-    quint32 ln2_length = 0;       // 003D..0040
-    quint8 x0041_0054[20] = {0};  // 0041..0054
-    quint32 pt2_offset = 0;       // 0055..0058
-    quint32 pt2_length = 0;       // 0059..005C
-    quint8 x005D_0070[20] = {0};  // 005D..0070
-    quint32 rgn2_offset = 0;      // 0071..0074
-    quint32 rgn2_length = 0;      // 0075..0078
-    quint32 unknown = 0;          // 0079..007C - E3 or E7
+    quint32 rgn1_offset = 0;      // 0015_0018 - RGN-body relative offset (new format)
+    quint32 rgn1_length = 0;      // 0019_001C
+    quint32 pg2_offset = 0;       // 001D_0020
+    quint32 pg2_length = 0;       // 0021_0024
+    quint8 x0025_0038[20] = {0};  // 0025_0038
+    quint32 ln2_offset = 0;       // 0039_003C
+    quint32 ln2_length = 0;       // 003D_0040
+    quint8 x0041_0054[20] = {0};  // 0041_0054
+    quint32 pt2_offset = 0;       // 0055_0058
+    quint32 pt2_length = 0;       // 0059_005C
+    quint8 x005D_0070[20] = {0};  // 005D_0070
+    quint32 rgn2_offset = 0;      // 0071_0074
+    quint32 rgn2_length = 0;      // 0075_0078
+    quint32 unknown = 0;          // 0079_007C - E3 or E7
     void print(quint32 offset);
   };
 
   struct hdr_lbl_t : public submap_hdr_t {
-    quint32 lbl1_offset = 0;     // 0015..0018 - sort description length
-    quint32 lbl1_length = 0;     // 0019..001C - label size
-    quint8 addr_shift = 0;       // 001D       - offset multiplier
-    quint8 coding = 0;           // 001E       - encoding type
-    quint32 lbl2_offset = 0;     // 001F..0022
-    quint32 lbl2_length = 0;     // 0023..0026
-    quint16 lbl2_rec_size = 0;   // 0027..0028
-    quint8 x0029_002C[4] = {0};  // 0029..002C
-    quint32 lbl3_offset = 0;     // 002D..0030
-    quint32 lbl3_length = 0;     // 0031..0034
-    quint16 lbl3_rec_size = 0;   // 0035..0036
-    quint8 x0037_003A[4] = {0};  // 0037..003A
-    quint32 lbl4_offset = 0;     // 003B..003E
-    quint32 lbl4_length = 0;     // 003F..0042
-    quint16 lbl4_rec_size = 0;   // 0043..0044
-    quint8 x0045_0048[4] = {0};  // 0045..0048
-    quint32 lbl5_offset = 0;     // 0049..004C
-    quint32 lbl5_length = 0;     // 004D..0050
-    quint16 lbl5_rec_size = 0;   // 0051..0052
-    quint8 x0053_0056[4] = {0};  // 0053..0056
-    quint32 lbl6_offset = 0;     // 0057..005A
-    quint32 lbl6_length = 0;     // 005B..005E
+    quint32 lbl1_offset = 0;     // 0015_0018 - sort description length
+    quint32 lbl1_length = 0;     // 0019_001C - label size
+    quint8 addr_shift = 0;       // 001D      - offset multiplier
+    quint8 coding = 0;           // 001E      - encoding type
+    quint32 lbl2_offset = 0;     // 001F_0022
+    quint32 lbl2_length = 0;     // 0023_0026
+    quint16 lbl2_rec_size = 0;   // 0027_0028
+    quint8 x0029_002C[4] = {0};  // 0029_002C
+    quint32 lbl3_offset = 0;     // 002D_0030
+    quint32 lbl3_length = 0;     // 0031_0034
+    quint16 lbl3_rec_size = 0;   // 0035_0036
+    quint8 x0037_003A[4] = {0};  // 0037_003A
+    quint32 lbl4_offset = 0;     // 003B_003E
+    quint32 lbl4_length = 0;     // 003F_0042
+    quint16 lbl4_rec_size = 0;   // 0043_0044
+    quint8 x0045_0048[4] = {0};  // 0045_0048
+    quint32 lbl5_offset = 0;     // 0049_004C
+    quint32 lbl5_length = 0;     // 004D_0050
+    quint16 lbl5_rec_size = 0;   // 0051_0052
+    quint8 x0053_0056[4] = {0};  // 0053_0056
+    quint32 lbl6_offset = 0;     // 0057_005A
+    quint32 lbl6_length = 0;     // 005B_005E
     quint8 lbl6_addr_shift = 0;  // 005F
     quint8 lbl6_glob_mask = 0;   // 0060
-    quint8 x0061_0063[3] = {0};  // 0061..0063
-    quint32 lbl7_offset = 0;     // 0064..0067
-    quint32 lbl7_length = 0;     // 0068..006B
-    quint16 lbl7_rec_size = 0;   // 006C..006D
-    quint8 x006E_0071[4] = {0};  // 006E..0071
-    quint32 lbl8_offset = 0;     // 0072..0075
-    quint32 lbl8_length = 0;     // 0076..0079
-    quint16 lbl8_rec_size = 0;   // 007A..007B
-    quint8 x007C_007F[4] = {0};  // 007C..007F
-    quint32 lbl9_offset = 0;     // 0080..0083
-    quint32 lbl9_length = 0;     // 0084..0087
-    quint16 lbl9_rec_size = 0;   // 0088..0089
-    quint8 x008A_008D[4] = {0};  // 008A..008D
-    quint32 lbl10_offset = 0;    // 008E..0091
-    quint32 lbl10_length = 0;    // 0092..0095
-    quint16 lbl10_rec_size = 0;  // 0096..0097
-    quint8 x0098_009B[4] = {0};  // 0098..009B
-    quint32 lbl11_offset = 0;    // 009C..009F
-    quint32 lbl11_length = 0;    // 00A0..00A3
-    quint16 lbl11_rec_size = 0;  // 00A4..00A5
-    quint8 x00A6_00A9[4] = {0};  // 00A6..00A9
-    quint16 codepage = 0;        // 00AA..00AB - optional check length
-    quint8 x00AC_00AF[4] = {0};  // 00AC..00AF - 0x07 0x00 0x02 0x80 or 0x12 0x00 0x01 0x80
-    quint32 lbl12_offset = 0;    // 00B0..00B3 - LBL-body relative offset (pseudo-NT) or sort descriptor
-    quint32 lbl12_length = 0;    // 00B4..00B7
+    quint8 x0061_0063[3] = {0};  // 0061_0063
+    quint32 lbl7_offset = 0;     // 0064_0067
+    quint32 lbl7_length = 0;     // 0068_006B
+    quint16 lbl7_rec_size = 0;   // 006C_006D
+    quint8 x006E_0071[4] = {0};  // 006E_0071
+    quint32 lbl8_offset = 0;     // 0072_0075
+    quint32 lbl8_length = 0;     // 0076_0079
+    quint16 lbl8_rec_size = 0;   // 007A_007B
+    quint8 x007C_007F[4] = {0};  // 007C_007F
+    quint32 lbl9_offset = 0;     // 0080_0083
+    quint32 lbl9_length = 0;     // 0084_0087
+    quint16 lbl9_rec_size = 0;   // 0088_0089
+    quint8 x008A_008D[4] = {0};  // 008A_008D
+    quint32 lbl10_offset = 0;    // 008E_0091
+    quint32 lbl10_length = 0;    // 0092_0095
+    quint16 lbl10_rec_size = 0;  // 0096_0097
+    quint8 x0098_009B[4] = {0};  // 0098_009B
+    quint32 lbl11_offset = 0;    // 009C_009F
+    quint32 lbl11_length = 0;    // 00A0_00A3
+    quint16 lbl11_rec_size = 0;  // 00A4_00A5
+    quint8 x00A6_00A9[4] = {0};  // 00A6_00A9
+    quint16 codepage = 0;        // 00AA_00AB - optional check length
+    quint8 x00AC_00AF[4] = {0};  // 00AC_00AF - 0x07 0x00 0x02 0x80 or 0x12 0x00 0x01 0x80
+    quint32 lbl12_offset = 0;    // 00B0_00B3 - LBL-body relative offset (new format) or sort descriptor
+    quint32 lbl12_length = 0;    // 00B4_00B7
     void print(quint32 offset);
   };
 
   struct hdr_net_t : public submap_hdr_t {
-    quint32 net1_offset;     // 0015..0018 - NET-body relative offset (pseudo-NT)
-    quint32 net1_length;     // 0019..001C
+    quint32 net1_offset;     // 0015_0018 - NET-body relative offset (new format)
+    quint32 net1_length;     // 0019_001C
     quint8 net1_addr_shift;  // 001D
-    quint32 net2_offset;     // 001E..0021
-    quint32 net2_length;     // 0022..0025
+    quint32 net2_offset;     // 001E_0021
+    quint32 net2_length;     // 0022_0025
     quint8 net2_addr_shift;  // 0026
-    quint32 net3_offset;     // 0027..002A
-    quint32 net3_length;     // 002B..002E
+    quint32 net3_offset;     // 0027_002A
+    quint32 net3_length;     // 002B_002E
     void print(quint32 offset);
   };
 
   struct hdr_nod_t : public submap_hdr_t {
-    quint32 nod1_offset;  // 0015..0018 - NOD-body relative offset (pseudo-NT)
-    quint32 not1_length;  // 0019..001C
+    quint32 nod1_offset;  // 0015_0018 - NOD-body relative offset (new format)
+    quint32 not1_length;  // 0019_001C
     quint8 not1_flags;    // 001D
     void print(quint32 offset);
   };
 
   struct hdr_dem_t : public submap_hdr_t {
-    quint32 flags;         // 0015..0018 - 0=meter, 1=feet
-    quint16 zoom_levels;   // 0019..001A
-    quint8 x001B_001D[4];  // 001B..001D
-    quint16 rec_size;      // 001F..0020
-    quint32 dem1_offset;   // 0021..0024
-    quint8 x0025_0029[4];  // 0025..0029
+    quint32 flags;         // 0015_0018 - 0=meter, 1=feet
+    quint16 zoom_levels;   // 0019_001A
+    quint8 x001B_001D[4];  // 001B_001D
+    quint16 rec_size;      // 001F_0020
+    quint32 dem1_offset;   // 0021_0024
+    quint8 x0025_0029[4];  // 0025_0029
     void print(quint32 offset);
   };
 
@@ -1404,13 +1402,13 @@ class ImgDump : public QCoreApplication {
 #pragma pack()
   // submap subfiles location info
   struct submap_subfile_t {
-    quint32 offset = 0;      // file offset of submap part (non-NT)
-    quint32 size = 0;        // size of the submap part (non-NT)
-    quint32 hdrOffset = 0;   // file offset of header part (pseudo-NT)
-    quint32 hdrSize = 0;     // size of the header part (pseudo-NT)
-    quint32 bodyOffset = 0;  // file offset of body part (pseudo-NT)
-    quint32 bodySize = 0;    // size of the body part (pseudo-NT)
-    submap_subfile_t() : offset(0), size(0), hdrOffset(0), hdrSize(0), bodyOffset(0), bodySize(0) {}
+    quint32 offset = 0;      // file offset of submap part (old format)
+    quint32 size = 0;        // size of the submap part (old format)
+    quint32 hdrOffset = 0;   // file offset of header part (new format)
+    quint32 hdrSize = 0;     // size of the header part (new format)
+    quint32 bodyOffset = 0;  // file offset of body part (new format)
+    quint32 bodySize = 0;    // size of the body part (new format)
+    // submap_subfile_t() : offset(0), size(0), hdrOffset(0), hdrSize(0), bodyOffset(0), bodySize(0) {}
   };
 
   struct submap_t {
@@ -1425,13 +1423,13 @@ class ImgDump : public QCoreApplication {
     hdr_tre_t hdrTRE;
     hdr_rgn_t hdrRGN;
     hdr_lbl_t hdrLBL;
-    hdr_nod_t hdrNOD;
     hdr_net_t hdrNET;
+    hdr_nod_t hdrNOD;
     hdr_dem_t hdrDEM;
     QVector<tre1_t> mapLevels;  // used maplevels
     QVector<subdiv_t> subdivs;  // list of subdivisions
     quint32 nSubdivsNext = 0;
-    StrTbl* strtbl;  // object to manage the string tables
+    StrTbl* strtbl;  // object to manage the string table
     bool isPseudoNT = false;
   };
 
@@ -1440,8 +1438,8 @@ class ImgDump : public QCoreApplication {
 
   void print(const char* format, ...);
   void readFat(QFile& srcFile);
-  void readImg(QFile& srcFile, submap_t& submap);
-  void readGmp(QFile& srcFile, submap_t& submap);
+  void readOldFormat(QFile& srcFile, submap_t& submasp);
+  void readNewFormat(QFile& srcFile, submap_t& submap);
   void readSubmaps(QFile& srcFile);
   // void readSubmapArea(submap_t& submap);
   void parseMapLevels(QFile& srcFile, submap_t& submap);
@@ -1776,7 +1774,7 @@ void ImgDump::hdr_tre_t::print(quint32 offset) {
 void ImgDump::hdr_rgn_t::print(quint32 offset) {
   submap_hdr_t::print();
 
-  printUInt32("rgn1_offset", rgn1_offset + offset);
+  printUInt32("rgn1_offset", rgn1_length ? rgn1_offset + offset : 0);
   printUInt32("rgn1_length", rgn1_length);
   printUInt32("pg2_offset", pg2_offset + offset);
   printUInt32("pg2_length", pg2_length);
@@ -1901,7 +1899,7 @@ void ImgDump::subdiv_t::print() const {
   printf("offsetPolygons2:  %08X  lengthPolygons2:  %08X\n", offPolygons2, lenPolygons2);
   printf("offsetPolylines2: %08X  lengthPolylines2: %08X\n", offPolylines2, lenPolylines2);
   printf("offsetPoints2:    %08X  lengthPoints2:    %08X\n", offPoints2, lenPoints2);
-  printf("iCenterLng %f iCenterLat %f\n", GARMIN_DEG(iCenterLng), GARMIN_DEG(iCenterLat));
+  printf("iCenterLng %f iCenterLat %f\n", GRMN_DEG(iCenterLng), GRMN_DEG(iCenterLat));
 }
 
 void ImgDump::subdiv_t::printLite() const {
@@ -1945,9 +1943,6 @@ void ImgDump::readFat(QFile& srcFile) {
   mask64 <<= 32;
   mask64 |= mask32;
 
-  if (strncmp(imghdr.signature, "DSKIMG", 7) != 0) {
-    throw Exception(tr("Bad file format: ") + inputFile);
-  }
   if (strncmp(imghdr.identifier, "GARMIN", 7) != 0) {
     throw Exception(tr("Bad file format: ") + inputFile);
   }
@@ -1959,6 +1954,8 @@ void ImgDump::readFat(QFile& srcFile) {
   // if (imghdr.desc1) {
   // nameStr = QString::fromLatin1(imghdr.desc1).trimmed();
   // }
+
+  // imghdr
 
   size_t blocksize = imghdr.blocksize();
 
@@ -2005,7 +2002,7 @@ void ImgDump::readFat(QFile& srcFile) {
   }
 }
 
-void ImgDump::readImg(QFile& srcFile, submap_t& submap) {
+void ImgDump::readOldFormat(QFile& srcFile, submap_t& submap) {
   QString subfileName = "TRE";
   if (submap.subfiles.keys().contains(subfileName)) {
     srcFile.seek(submap.subfiles[subfileName].offset);
@@ -2152,7 +2149,7 @@ void ImgDump::readImg(QFile& srcFile, submap_t& submap) {
   }
 }
 
-void ImgDump::readGmp(QFile& srcFile, submap_t& submap) {
+void ImgDump::readNewFormat(QFile& srcFile, submap_t& submap) {
   const QString gmpSubfileName = "GMP";
   srcFile.seek(submap.subfiles[gmpSubfileName].offset);
 
@@ -2326,15 +2323,13 @@ void ImgDump::readSubmaps(QFile& srcFile) {
 
   for (auto& submap : submaps) {
     if (submap.isPseudoNT) {
-      readGmp(srcFile, submap);
-
+      readNewFormat(srcFile, submap);
     } else {
-      if (!(submap.subfiles.contains("TRE") && submap.subfiles.contains("RGN"))) {
-        // throw CException(QString("Missing mandatory submap subfiles: %1 %2 %3").arg(submap.name).arg(submap.subfiles.contains("TRE")).arg(submap.subfiles.contains("RGN")));
-        // skip system subfiles with no road data
-        continue;
-      }
-      readImg(srcFile, submap);
+      readOldFormat(srcFile, submap);
+    }
+    if (!(submap.subfiles.contains("TRE") && submap.subfiles.contains("RGN"))) {
+      // missing mandatory submap subfiles
+      continue;
     }
     parseMapLevels(srcFile, submap);
     parseSubdivInfo(srcFile, submap);
@@ -2404,10 +2399,10 @@ ImgDump::tre0_t ImgDump::readCopyrights(QFile& srcFile, quint32 baseOffset, quin
 /*
 void ImgDump::readSubmapArea(submap_t& submap) {
   // read map boundaries from header
-  submap.north = GARMIN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.northbound));
-  submap.east = GARMIN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.eastbound));
-  submap.south = GARMIN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.southbound));
-  submap.west = GARMIN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.westbound));
+  submap.north = GRMN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.northbound));
+  submap.east = GRMN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.eastbound));
+  submap.south = GRMN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.southbound));
+  submap.west = GRMN_RAD(gar_ptr_load(int24_t, submap.hdrTRE.westbound));
 
   if (submap.east == submap.west) {
     submap.east = -submap.east;
@@ -2451,13 +2446,13 @@ void ImgDump::parseSubdivInfo(QFile& srcFile, submap_t& submap) {
   quint32 nSubdiv = submap.mapLevels[mapLevelIdx].subdiv;
   // parse all 16 byte subdivision entries
   quint32 i;
-  quint32 rgnoff = submap.hdrRGN.size;
+  quint32 rgnoff = submap.hdrRGN.rgn1_offset;
   for (i = 0; i < submap.nSubdivsNext; ++i, --nSubdiv) {
     qint32 cx, cy;
     qint32 width, height;
 
     subdiv->maplevel = &submap.mapLevels[mapLevelIdx];
-    subdiv->n = i;
+    subdiv->n = i + 1;
     subdiv->next = pTre2N->next;
     subdiv->terminate = TRE_SUBDIV_TERM(pTre2N);
     subdiv->rgn_start = pTre2N->rgn_offset[0] | pTre2N->rgn_offset[1] << 8 | pTre2N->rgn_offset[2] << 16 | (pTre2N->elements & 0x0F) << 24;
@@ -2466,9 +2461,7 @@ void ImgDump::parseSubdivInfo(QFile& srcFile, submap_t& submap) {
     if (subdiv_prev != submap.subdivs.end()) {
       subdiv_prev->rgn_end = subdiv->rgn_start;
     } else {
-      // subdiv_prev->rgn_end = 0;  // @crash
-      //_CrtCheckMemory();
-      subdiv->rgn_end = 0;  // @bugfix
+      subdiv->rgn_end = 0;
     }
     subdiv_prev = subdiv;
 
@@ -2494,10 +2487,10 @@ void ImgDump::parseSubdivInfo(QFile& srcFile, submap_t& submap) {
     width = TRE_SUBDIV_WIDTH(pTre2N) << subdiv->shift;
     height = pTre2N->height << subdiv->shift;
 
-    subdiv->north = GARMIN_RAD(cy + height + 1);
-    subdiv->south = GARMIN_RAD(cy - height);
-    subdiv->east = GARMIN_RAD(cx + width + 1);
-    subdiv->west = GARMIN_RAD(cx - width);
+    subdiv->north = GRMN_RAD(cy + height + 1);
+    subdiv->south = GRMN_RAD(cy - height);
+    subdiv->east = GRMN_RAD(cx + width + 1);
+    subdiv->west = GRMN_RAD(cx - width);
 
     subdiv->area = QRectF(QPointF(subdiv->west, subdiv->north), QPointF(subdiv->east, subdiv->south));
 
@@ -2517,12 +2510,12 @@ void ImgDump::parseSubdivInfo(QFile& srcFile, submap_t& submap) {
     qint32 cx, cy;
     qint32 width, height;
     subdiv->maplevel = &submap.mapLevels[mapLevelIdx];
-    subdiv->n = i;
+    subdiv->n = i + 1;
     subdiv->next = 0;
     subdiv->terminate = TRE_SUBDIV_TERM(pTre2L);
     subdiv->rgn_start = pTre2L->rgn_offset[0] | pTre2L->rgn_offset[1] << 8 | pTre2L->rgn_offset[2] << 16 | (pTre2L->elements & 0x0F) << 24;
-    if (subdiv->rgn_start + rgnoff > submap.hdrRGN.rgn1_length) {
-      qDebug() << "[WARN] Block size overflow?" << Qt::hex << subdiv->rgn_start + rgnoff << submap.hdrRGN.rgn1_length;
+    if (subdiv->rgn_start >= submap.hdrRGN.rgn1_length) {
+      qDebug() << "[WARN] Block size overflow:" << submap.name << i << nSubdivs << Qt::hex << subdiv->rgn_start << submap.hdrRGN.rgn1_length;
       break;
     }
     subdiv->rgn_start += rgnoff;
@@ -2544,16 +2537,21 @@ void ImgDump::parseSubdivInfo(QFile& srcFile, submap_t& submap) {
     width = TRE_SUBDIV_WIDTH(pTre2L) << subdiv->shift;
     height = pTre2L->height << subdiv->shift;
 
-    subdiv->north = GARMIN_RAD(cy + height + 1);
-    subdiv->south = GARMIN_RAD(cy - height);
-    subdiv->east = GARMIN_RAD(cx + width + 1);
-    subdiv->west = GARMIN_RAD(cx - width);
+    subdiv->north = GRMN_RAD(cy + height + 1);
+    subdiv->south = GRMN_RAD(cy - height);
+    subdiv->east = GRMN_RAD(cx + width + 1);
+    subdiv->west = GRMN_RAD(cx - width);
 
     subdiv->area = QRectF(QPointF(subdiv->west, subdiv->north), QPointF(subdiv->east, subdiv->south));
 
     subdiv_prev = subdiv;
     ++pTre2L;
     ++subdiv;
+  }
+
+  const quint32 checkSize = pTre2L->rgn_offset[0] | pTre2L->rgn_offset[1] << 8 | pTre2L->rgn_offset[2] << 16 | (pTre2L->elements) << 24;
+  if (checkSize != submap.hdrRGN.rgn1_length) {
+    qDebug() << "[WARN] The block size check does not match:" << Qt::hex << checkSize << submap.hdrRGN.rgn1_length;
   }
 }
 
@@ -3570,9 +3568,7 @@ void ImgDump::writeHeader(QFile& dstFile, const submap_t& submap) {
 
 int main(int argc, char* argv[]) {
 #ifdef _DEBUG
-  // check for memory leaks & heap corruption
-  _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
-
+  _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);  // check for memory leaks & heap corruption
   //_CrtSetDbgFlag(_CRTDBG_CHECK_ALWAYS_DF);
 #endif
 
