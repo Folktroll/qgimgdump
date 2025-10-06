@@ -10,7 +10,6 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 add_executable(qgimgdump 
     src/main.cpp 
     src/imgdump.cpp 
-    src/imgdumpprint.cpp 
     src/imgdump.h 
     src/subfiles/lbl.cpp
     src/subfiles/lbl.h 
@@ -24,6 +23,8 @@ add_executable(qgimgdump
     src/utils/inline.h
     src/utils/misc.h 
     src/utils/print.h
+    src/utils/struct.cpp 
+    src/utils/struct.h
     src/utils/task.h
 )
 target_include_directories(qgimgdump PRIVATE

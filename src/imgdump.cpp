@@ -9,7 +9,8 @@
 
 #include "exception.h"
 #include "inline.h"
-#include "subfiles/lbl.h"
+#include "lbl.h"
+#include "struct.h"
 #include "task.h"
 
 ImgDump::ImgDump(int &argc, char **argv) : QCoreApplication(argc, argv) {
@@ -116,13 +117,13 @@ ImgDump::~ImgDump() {
 void ImgDump::readFat(QFile &srcFile) {
   submaps.clear();
 
-  gmapsupp_imghdr_t imghdr;
+  IMG::gmapsupp_imghdr_t imghdr;
   srcFile.seek(0);
-  srcFile.read((char *)&imghdr, sizeof(gmapsupp_imghdr_t));
+  srcFile.read((char *)&imghdr, sizeof(IMG::gmapsupp_imghdr_t));
   srcFile.seek(imghdr.offsetFAT * 0x200);
 
   if (debugInfo) {
-    print("----- IMG Header ----- size(%08X)\n", sizeof(gmapsupp_imghdr_t));
+    print("----- IMG Header ----- size(%08X)\n", sizeof(IMG::gmapsupp_imghdr_t));
     imghdr.print();
   }
 
@@ -157,8 +158,8 @@ void ImgDump::readFat(QFile &srcFile) {
   size_t blocksize = imghdr.blocksize();
 
   qDebug() << "---- FAT ----";
-  FATBlock_t FATBlock;
-  srcFile.read((char *)&FATBlock, sizeof(FATBlock_t));
+  IMG::FATBlock_t FATBlock;
+  srcFile.read((char *)&FATBlock, sizeof(IMG::FATBlock_t));
   while (FATBlock.flag == 1) {
     if (srcFile.atEnd()) {
       throw Exception("Premature end of file.");
@@ -195,7 +196,7 @@ void ImgDump::readFat(QFile &srcFile) {
       }
     }
 
-    srcFile.read((char *)&FATBlock, sizeof(FATBlock_t));
+    srcFile.read((char *)&FATBlock, sizeof(IMG::FATBlock_t));
   }
 }
 
@@ -350,7 +351,7 @@ void ImgDump::readNewFormat(QFile &srcFile, submap_t &submap) {
   const QString gmpSubfileName = "GMP";
   srcFile.seek(submap.subfiles[gmpSubfileName].offset);
 
-  gmp_hdr_t hdr;
+  IMG::gmp_hdr_t hdr;
   srcFile.read((char *)&hdr, sizeof(hdr));
   QString copyright(srcFile.readLine());
 
@@ -547,11 +548,11 @@ void ImgDump::parseMapLevels(QFile &srcFile, submap_t &submap) {
     minno(&submap.hdrTRE, bufMapLevels);
   }
 
-  quint32 nLevels = submap.hdrTRE.tre1_size / sizeof(tre1_t);
+  quint32 nLevels = submap.hdrTRE.tre1_size / sizeof(IMG::tre1_t);
   quint32 nSubdivs = 0;
   quint32 nSubdivsLast = 0;
 
-  tre1_t *pMapLevel = (tre1_t *)bufMapLevels.data();
+  IMG::tre1_t *pMapLevel = (IMG::tre1_t *)bufMapLevels.data();
   for (quint32 i = 0; i < nLevels; i++) {
     nSubdivs += pMapLevel->subdiv;
     nSubdivsLast = pMapLevel->subdiv;
@@ -568,8 +569,8 @@ void ImgDump::parseMapLevels(QFile &srcFile, submap_t &submap) {
   submap.subdivs.resize(nSubdivs);
 }
 
-ImgDump::tre0_t ImgDump::readCopyrights(QFile &srcFile, quint32 baseOffset, quint32 limitOffset) {
-  tre0_t result;
+IMG::tre0_t ImgDump::readCopyrights(QFile &srcFile, quint32 baseOffset, quint32 limitOffset) {
+  IMG::tre0_t result;
 
   quint32 size = limitOffset - baseOffset;
   QByteArray buf(size, 0);
@@ -619,6 +620,16 @@ void ImgDump::readSubmapArea(submap_t& submap) {
 }
 */
 
+void ImgDump::print(const char *format, ...) {
+  QMutexLocker lock(&mutex);
+  va_list args;
+  va_start(args, format);
+  vfprintf(stdout, format, args);
+  va_end(args);
+
+  fflush(stdout);
+}
+
 void ImgDump::parseSubdivInfo(QFile &srcFile, submap_t &submap) {
   quint32 start = submap.subfiles[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.size;
   quint32 end = submap.subfiles[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre2_offset;
@@ -630,10 +641,10 @@ void ImgDump::parseSubdivInfo(QFile &srcFile, submap_t &submap) {
   srcFile.seek(submap.subfiles[submap.isPseudoNT ? "GMP" : "TRE"].offset + submap.hdrTRE.tre2_offset);
   QByteArray tre2 = srcFile.read(submap.hdrTRE.tre2_size);
 
-  tre2_next_t *pTre2N = (tre2_next_t *)tre2.data();
+  IMG::tre2_next_t *pTre2N = (IMG::tre2_next_t *)tre2.data();
 
-  QVector<subdiv_t>::iterator subdiv = submap.subdivs.begin();
-  QVector<subdiv_t>::iterator subdiv_prev = submap.subdivs.end();
+  QVector<IMG::subdiv_t>::iterator subdiv = submap.subdivs.begin();
+  QVector<IMG::subdiv_t>::iterator subdiv_prev = submap.subdivs.end();
 
   int mapLevelIdx = 0;
   if (submap.mapLevels.size() == 0) {
@@ -701,7 +712,7 @@ void ImgDump::parseSubdivInfo(QFile &srcFile, submap_t &submap) {
   qDebug() << "Total subdivs:" << nSubdivs;
   ++mapLevelIdx;
   // witch pointer to 14 byte subdivision sections
-  tre2_t *pTre2L = pTre2N;
+  IMG::tre2_t *pTre2L = pTre2N;
   // parse all 14 byte subdivision entries of last map level
   for (; i < nSubdivs; ++i) {
     qint32 cx, cy;
@@ -770,14 +781,14 @@ void ImgDump::parseSubdivInfoExt(QFile &srcFile, submap_t &submap) {
     rgnOffPoint2 -= submap.hdrRGN.rgn2_offset;
   }
 
-  QVector<subdiv_t>::iterator subdiv = submap.subdivs.begin();
-  QVector<subdiv_t>::iterator subdiv_prev = submap.subdivs.end();
-  if (submap.hdrTRE.size >= 0x9A && submap.hdrTRE.tre7_size && rec_size >= sizeof(tre7_t)) {
+  auto subdiv = submap.subdivs.begin();
+  auto subdiv_prev = submap.subdivs.end();
+  if (submap.hdrTRE.size >= 0x9A && submap.hdrTRE.tre7_size && rec_size >= sizeof(IMG::tre7_t)) {
     srcFile.seek(blockStart);
     QByteArray subdiv2 = srcFile.read(submap.hdrTRE.tre7_size);
-    tre7_t *pSubDiv2 = (tre7_t *)subdiv2.data();
+    auto *pSubDiv2 = (IMG::tre7_t *)subdiv2.data();
 
-    bool skipPois = (rec_size != sizeof(tre7_t));
+    bool skipPois = (rec_size != sizeof(IMG::tre7_t));
 
     subdiv = submap.subdivs.begin();
     subdiv_prev = submap.subdivs.begin();
@@ -786,7 +797,7 @@ void ImgDump::parseSubdivInfoExt(QFile &srcFile, submap_t &submap) {
     subdiv->offPoints2 = skipPois ? 0 : pSubDiv2->offsetPoints + rgnOffPoint2;
 
     ++subdiv;
-    pSubDiv2 = reinterpret_cast<tre7_t *>((quint8 *)pSubDiv2 + rec_size);
+    pSubDiv2 = reinterpret_cast<IMG::tre7_t *>((quint8 *)pSubDiv2 + rec_size);
 
     while (subdiv != submap.subdivs.end()) {
       subdiv->offPolygons2 = pSubDiv2->offsetPolygons + rgnOffPolyg2;
@@ -800,7 +811,7 @@ void ImgDump::parseSubdivInfoExt(QFile &srcFile, submap_t &submap) {
       subdiv_prev = subdiv;
 
       ++subdiv;
-      pSubDiv2 = reinterpret_cast<tre7_t *>((quint8 *)pSubDiv2 + rec_size);
+      pSubDiv2 = reinterpret_cast<IMG::tre7_t *>((quint8 *)pSubDiv2 + rec_size);
     }
 
     subdiv_prev->lenPolygons2 = rgnOffPolyg2 + rgnLenPolyg2 - subdiv_prev->offPolygons2;
@@ -993,7 +1004,7 @@ void ImgDump::processObjects(QFile &dstFile, QFile &srcFile, const submap_t &sub
       return;
     }
 
-    for (const subdiv_t &subdiv : submap.subdivs) {
+    for (const IMG::subdiv_t &subdiv : submap.subdivs) {
       // if (debugInfo) { subdiv.print(); }
       if (DebugCounters::warnInvalidCoords + warnInvalidType + warnSuspiciousSegment + warnSkipOutside + infoSkipDupePoint + warnTotals + warnPolyOversize > 500) {
         qDebug() << "[ERROR] Too many errors: wrong offsets or unknown format with extended headers.";
@@ -1067,7 +1078,7 @@ bool ImgDump::isPolygonTinyUltraFast(const QPolygonF &polygon, double minDimensi
   return (bounds.width() < minDimension || bounds.height() < minDimension);
 }
 
-void ImgDump::decodeRgn(QFile &dstFile, QFile &srcFile, const subdiv_t &subdiv, StrTbl *strtbl, const QByteArray &rgndata) {
+void ImgDump::decodeRgn(QFile &dstFile, QFile &srcFile, const IMG::subdiv_t &subdiv, StrTbl *strtbl, const QByteArray &rgndata) {
   if (subdiv.rgn_start == subdiv.rgn_end && !subdiv.lenPolygons2 && !subdiv.lenPolylines2 && !subdiv.lenPoints2) {
     return;
   }

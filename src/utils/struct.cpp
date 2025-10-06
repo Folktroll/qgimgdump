@@ -1,7 +1,8 @@
-#include "imgdump.h"
+#include "struct.h"
+
 #include "print.h"
 
-void ImgDump::gmapsupp_imghdr_t::print() {
+void IMG::gmapsupp_imghdr_t::print() {
   printUInt8("xorByte", xorByte);
   printArrayUInt8("x0001_0007", x0001_0007, sizeof(x0001_0007));
   printUInt16("version", version);
@@ -46,7 +47,7 @@ void ImgDump::gmapsupp_imghdr_t::print() {
   printUInt16("terminator", terminator);
 }
 
-void ImgDump::submap_hdr_t::print() {
+void IMG::submap_hdr_t::print() {
   printUInt16("size", size);
   printArrayInt8("type", type, sizeof(type));
   printUInt8("x000C", x000C);
@@ -59,7 +60,7 @@ void ImgDump::submap_hdr_t::print() {
   printInt8("second", second);
 }
 
-void ImgDump::gmp_hdr_t::print() {
+void IMG::gmp_hdr_t::print() {
   submap_hdr_t::print();
 
   printArrayUInt8("x0015_0018", x0015_0018, sizeof(x0015_0018));
@@ -73,7 +74,7 @@ void ImgDump::gmp_hdr_t::print() {
   printUInt32("met_offset", met_offset);
 }
 
-void ImgDump::hdr_tre_t::print(quint32 offset) {
+void IMG::hdr_tre_t::print(quint32 offset) {
   submap_hdr_t::print();
 
   printUInt24("northbound", northbound);
@@ -128,7 +129,7 @@ void ImgDump::hdr_tre_t::print(quint32 offset) {
   printUInt32("map_id2", map_id2);
 }
 
-void ImgDump::hdr_rgn_t::print(quint32 offset) {
+void IMG::hdr_rgn_t::print(quint32 offset) {
   submap_hdr_t::print();
 
   printUInt32("rgn1_offset", rgn1_length ? rgn1_offset + offset : 0);
@@ -147,7 +148,7 @@ void ImgDump::hdr_rgn_t::print(quint32 offset) {
   printUInt32("unknown", unknown);
 }
 
-void ImgDump::hdr_lbl_t::print(quint32 offset) {
+void IMG::hdr_lbl_t::print(quint32 offset) {
   submap_hdr_t::print();
 
   printUInt32("lbl1_offset", lbl1_offset + offset);
@@ -213,7 +214,7 @@ void ImgDump::hdr_lbl_t::print(quint32 offset) {
   printUInt32("lbl12_length", lbl12_length);
 }
 
-void ImgDump::hdr_net_t::print(quint32 offset) {
+void IMG::hdr_net_t::print(quint32 offset) {
   submap_hdr_t::print();
 
   printUInt32("net1_offset", net1_offset + offset);
@@ -226,13 +227,13 @@ void ImgDump::hdr_net_t::print(quint32 offset) {
   printUInt32("net3_length", net3_length);
 }
 
-void ImgDump::hdr_nod_t::print(quint32 offset) {
+void IMG::hdr_nod_t::print(quint32 offset) {
   submap_hdr_t::print();
 
   printUInt32("nod1_offset", nod1_offset + offset);
 }
 
-void ImgDump::hdr_dem_t::print(quint32 offset) {
+void IMG::hdr_dem_t::print(quint32 offset) {
   submap_hdr_t::print();
 
   printUInt32("flags", flags);
@@ -243,7 +244,7 @@ void ImgDump::hdr_dem_t::print(quint32 offset) {
   printArrayUInt8("x0025_0029", x0025_0029, sizeof(x0025_0029));
 }
 
-void ImgDump::subdiv_t::print() const {
+void IMG::subdiv_t::print() const {
   if (next) {
     printf("--- subdiv #%i next #%i---\n", n, next);
   } else {
@@ -259,16 +260,6 @@ void ImgDump::subdiv_t::print() const {
   printf("iCenterLng %f iCenterLat %f\n", GRMN_DEG(iCenterLng), GRMN_DEG(iCenterLat));
 }
 
-void ImgDump::subdiv_t::printLite() const {
+void IMG::subdiv_t::printLite() const {
   printf("subdiv: %i | zoom: %i | pt: %i | poi: %i | ln: %i | pg: %i\n", n, level, hasPoints, hasPois, hasPolylines, hasPolygons);
-}
-
-void ImgDump::print(const char *format, ...) {
-  QMutexLocker lock(&mutex);
-  va_list args;
-  va_start(args, format);
-  vfprintf(stdout, format, args);
-  va_end(args);
-
-  fflush(stdout);
 }
