@@ -3,6 +3,8 @@
 #include "lbl.h"
 #include "misc.h"
 
+using namespace App;
+
 quint32 RgnPoint::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData) {
   type = (quint16)(*pData) << 8;
 

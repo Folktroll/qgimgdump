@@ -1,6 +1,8 @@
 #include "bitstrreader.h"
 
-BitstrReader::BitstrReader(const quint8 *pData, quint32 n, quint32 bx, quint32 by, bool extra_bit, sign_info_t &si)
+using namespace App;
+
+BitstrReader::BitstrReader(const quint8 *pData, quint32 n, quint32 bx, quint32 by, bool extra_bit, SignInfo_t &si)
     : reg(0),
       pData(pData),
       bytes(n),

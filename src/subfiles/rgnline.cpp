@@ -1,7 +1,10 @@
 #include "rgnline.h"
 
+#include "global.h"
 #include "inline.h"
 #include "misc.h"
+
+using namespace App;
 
 qint32 RgnLine::maxVecSize = 0;
 
@@ -100,7 +103,7 @@ quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, boo
   // qDebug() << "data1      " << rawData;
 #endif
 
-  sign_info_t signinfo;
+  SignInfo_t signinfo;
   bitsPerCoord(bs_info, *pData, bx, by, signinfo, false);
 
   BitstrReader sr(pData, bs_len, bx, by, extra_bit, signinfo);
@@ -211,7 +214,7 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
   qDebug() << "bytes total" << bytes_total;
 #endif
 
-  sign_info_t signinfo;
+  SignInfo_t signinfo;
   bitsPerCoord(bs_info, *pData, bx, by, signinfo, true);
 
   // qDebug() << ">>" << bs_len << bytes_total << (pEnd - pStart);
@@ -280,8 +283,9 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
   return bytes_total;
 }
 
-void RgnLine::bitsPerCoord(quint8 base, quint8 bfirst, quint32 &bx, quint32 &by, sign_info_t &signinfo, bool isVer2) {
-  bool x_sign_same, y_sign_same;
+void RgnLine::bitsPerCoord(quint8 base, quint8 bfirst, quint32 &bx, quint32 &by, SignInfo_t &signinfo, bool isVer2) {
+  bool x_sign_same;
+  bool y_sign_same;
 
   quint8 mask = 0x1;
 

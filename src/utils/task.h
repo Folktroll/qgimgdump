@@ -1,14 +1,20 @@
 #pragma once
 
-using fSubmapTask = std::function<void()>;
+#include <QRunnable>
+// #include <function>
 
-class CSubmapTask : public QRunnable {
+namespace App {
+
+using SubMapTaskFn = std::function<void()>;
+
+class SubMapTask : public QRunnable {
  public:
-  CSubmapTask(fSubmapTask task) : task(task) {}
-  ~CSubmapTask() = default;
+  explicit SubMapTask(SubMapTaskFn const &task) : task(task) {}
 
-  void run() { task(); }
+  void run() override { task(); }
 
  private:
-  fSubmapTask task;
+  const SubMapTaskFn task;
 };
+
+}  // namespace App

@@ -22,7 +22,7 @@ This section contains useful resources for working with Garmin IMG files, includ
 ### 📄 PDF Documents
 
 - **[Garmin IMG Format Overview](https://sourceforge.net/projects/garmin-img/files/IMG%20File%20Format/1.0/imgformat-1.0.pdf)**  
-  Introduction to IMG format, including file system structure and main subfiles (by John Mechalas).
+  Introduction to IMG format, including file system structure and main subFiles (by John Mechalas).
 
 - **[Exploring Garmin's IMG Format](https://www.pinns.co.uk/osm/docs/expl_img2015.pdf)**  
   Practical guide for decoding coordinate data and bit-level structures in Garmin IMG files (by N. Willink).

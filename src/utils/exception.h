@@ -2,10 +2,14 @@
 
 #include <QException>
 
+namespace App {
+
 class Exception : public QException {
  public:
-  Exception(const QString &msg) : msg(msg) {}
+  explicit Exception(const QString &msg) : msg(msg) {}
 
-  operator const QString &() const { return msg; }
+  explicit operator const QString &() const { return msg; }
   QString msg;
 };
+
+}  // namespace App

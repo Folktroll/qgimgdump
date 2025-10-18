@@ -3,38 +3,41 @@
 #include <QDebug>
 #include <QFile>
 #include <QObject>
-#include <QTextCodec>
+#include <QtCore5Compat/QTextCodec>
 
 #include "misc.h"
 
-StrTbl::StrTbl(const quint16 codepage, const quint8 mask, QObject *parent) : QObject(parent), codepage(codepage), mask(mask) {
-  if (codepage != 0) {
-    if (1250 <= codepage && codepage <= 1258) {
-      char strcp[64];
-      sprintf(strcp, "Windows-%i", codepage);
-      codec = QTextCodec::codecForName(strcp);
-    } else if (codepage == 950) {
-      codec = QTextCodec::codecForName("Big5");
-    } else if (codepage == 850) {
-      codec = QTextCodec::codecForName("IBM 850");
-    } else if (codepage == 65001) {
-      codec = QTextCodec::codecForName("UTF-8");
+using namespace App;
+
+StrTbl::StrTbl(Ctx &ctx) : ctx(ctx) {
+  if (ctx.codepage != 0) {
+    std::string strcp;
+    if (1250 <= ctx.codepage && ctx.codepage <= 1258) {
+      strcp = "Windows-" + std::to_string(ctx.codepage);
+    } else if (ctx.codepage == 950) {
+      strcp = "Big5";
+    } else if (ctx.codepage == 850) {
+      strcp = "IBM 850";
+    } else if (ctx.codepage == 65001) {
+      strcp = "UTF-8";
     } else {
-      qDebug() << "Unknown codepage:" << codepage << "0x" << Qt::hex << codepage;
-      codec = QTextCodec::codecForName("Latin1");
+      qDebug() << "Unknown codepage:" << ctx.codepage << "0x" << Qt::hex << ctx.codepage;
+      strcp = "Latin1";
     }
+    ctx.codec = QTextCodec::codecForName(strcp.c_str());
   }
 
-  mask32 = mask;
-  mask32 <<= 8;
-  mask32 |= mask;
-  mask32 <<= 8;
-  mask32 |= mask;
-  mask32 <<= 8;
-  mask32 |= mask;
-  mask64 = mask32;
-  mask64 <<= 32;
-  mask64 |= mask32;
+  ctx.mask.x32 = ctx.mask.x8;
+  ctx.mask.x32 <<= 8;
+  ctx.mask.x32 |= ctx.mask.x8;
+  ctx.mask.x32 <<= 8;
+  ctx.mask.x32 |= ctx.mask.x8;
+  ctx.mask.x32 <<= 8;
+  ctx.mask.x32 |= ctx.mask.x8;
+
+  ctx.mask.x64 = ctx.mask.x32;
+  ctx.mask.x64 <<= 32;
+  ctx.mask.x64 |= ctx.mask.x32;
 }
 
 StrTbl::~StrTbl() = default;
@@ -54,14 +57,16 @@ void StrTbl::registerNET1(const quint32 offset, const quint32 size, const quint8
   addrshift2 = shift;
 }
 
-void StrTbl::readFile(QFile &srcFile, quint32 offset, quint32 size, QByteArray &data) {
+void StrTbl::readFile(QFile &srcFile, quint32 offset, quint32 size, QByteArray &data) const {
   if (offset + size > static_cast<quint32>(srcFile.size())) {
     data.clear();
+    qWarning() << "[WARN] Offset and size exceed file size. Aborting read operation.";
     return;
   }
 
   if (!srcFile.seek(offset)) {
     data.clear();
+    qWarning() << "[WARN] Failed to seek to offset" << offset << ". Aborting read operation.";
     return;
   }
 
@@ -71,7 +76,7 @@ void StrTbl::readFile(QFile &srcFile, quint32 offset, quint32 size, QByteArray &
   }
 
   // if mask == 0, no xor is necessary
-  if (mask == 0) {
+  if (ctx.mask.x8 == 0) {
     return;
   }
 
@@ -89,32 +94,32 @@ void StrTbl::readFile(QFile &srcFile, quint32 offset, quint32 size, QByteArray &
   // }
 
   char *rawData = data.data();
-  const quint64 mask64 = quint64(mask) * 0x0101010101010101ULL;
+  const quint64 m64 = quint64(ctx.mask.x8) * 0x0101010101010101ULL;
 
   quint32 processed = 0;
   while (processed + 8 <= size) {
     quint64 value;
     std::memcpy(&value, rawData + processed, 8);
-    value ^= mask64;
+    value ^= m64;
     std::memcpy(rawData + processed, &value, 8);
     processed += 8;
   }
 
   while (processed < size) {
-    rawData[processed] ^= mask;
+    rawData[processed] ^= ctx.mask.x8;
     ++processed;
   }
 }
 
-quint32 StrTbl::getNewOffset(QFile &srcFile, const quint32 offset, label_type t) {
+quint32 StrTbl::getNewOffset(QFile &srcFile, const quint32 offset, LabelType t) const {
   quint32 newOffset = offset;
 
-  if (t == label_type::poi) {
-    QByteArray buffer;
-    readFile(srcFile, offsetLBL6 + offset, sizeof(quint32), buffer);
-    newOffset = gar_ptr_load(uint32_t, buffer.data());
+  if (t == LabelType::poi) {
+    QByteArray buf;
+    readFile(srcFile, offsetLBL6 + offset, sizeof(quint32), buf);
+    newOffset = gar_ptr_load(uint32_t, buf.data());
     newOffset = (newOffset & 0x003FFFFF);
-  } else if (t == label_type::net) {
+  } else if (t == LabelType::net) {
     if (offsetNET1 == 0) {
       return 0xFFFFFFFF;
     }
@@ -132,12 +137,12 @@ quint32 StrTbl::getNewOffset(QFile &srcFile, const quint32 offset, label_type t)
   return newOffset;
 }
 
-QString StrTbl::processLabel(const char *buffer, unsigned lastSeperator) const {
+QString StrTbl::processLabel(std::string buf, unsigned lastSeperator) const {
   QString label;
-  if (codepage != 0) {
-    label = codec->toUnicode(buffer);
+  if (ctx.codepage != 0) {
+    label = ctx.codec->toUnicode(buf.data());
   } else {
-    label = buffer;
+    label = buf.data();
   }
 
   if (lastSeperator == 0x1F) {
@@ -152,11 +157,11 @@ QString StrTbl::processLabel(const char *buffer, unsigned lastSeperator) const {
   return label;
 }
 
-StrTbl6::StrTbl6(const quint16 codepage, const quint8 mask, QObject *parent) : StrTbl(codepage, mask, parent) {};
+StrTbl6::StrTbl6(Ctx &ctx) : StrTbl(ctx) {};
 
 StrTbl6::~StrTbl6() = default;
 
-void StrTbl6::get(QFile &srcFile, quint32 offset, label_type t, QStringList &labels) {
+void StrTbl6::get(QFile &srcFile, quint32 offset, LabelType t, QStringList &labels) {
   labels.clear();
 
   offset = getNewOffset(srcFile, offset, t);
@@ -202,29 +207,32 @@ void StrTbl6::get(QFile &srcFile, quint32 offset, label_type t, QStringList &lab
         reg <<= 6;
         bits -= 6;
         fill();
-        buffer[idx++] = str6tbl2[c1];
+        buffer[idx] = str6tbl2[c1];
+        idx++;
       } else if (c1 == 0x1B) {
         c1 = reg >> 26;
         reg <<= 6;
         bits -= 6;
         fill();
-        buffer[idx++] = str6tbl3[c1];
+        buffer[idx] = str6tbl3[c1];
+        idx++;
       } else if (c1 > 0x1C && c1 < 0x20) {
         lastSeperator = c1;
         buffer[idx] = 0;
-        if (strlen(buffer)) {
+        if (buffer.length()) {
           labels << processLabel(buffer, lastSeperator);
         }
         idx = 0;
         buffer[0] = 0;
       }
     } else {
-      buffer[idx++] = str6tbl1[c1];
+      buffer[idx] = str6tbl1[c1];
+      idx++;
     }
   }
 
   buffer[idx] = 0;
-  if (strlen(buffer)) {
+  if (buffer.length()) {
     labels << processLabel(buffer, lastSeperator);
   }
 }
@@ -238,11 +246,11 @@ void StrTbl6::fill() {
   }
 }
 
-StrTblUtf8::StrTblUtf8(const quint16 codepage, const quint8 mask, QObject *parent) : StrTbl(codepage, mask, parent) {};
+StrTblUtf8::StrTblUtf8(Ctx &ctx) : StrTbl(ctx) {};
 
 StrTblUtf8::~StrTblUtf8() = default;
 
-void StrTblUtf8::get(QFile &srcFile, quint32 offset, label_type t, QStringList &labels) {
+void StrTblUtf8::get(QFile &srcFile, quint32 offset, LabelType t, QStringList &labels) {
   labels.clear();
   offset = getNewOffset(srcFile, offset, t);
 
@@ -257,9 +265,9 @@ void StrTblUtf8::get(QFile &srcFile, quint32 offset, label_type t, QStringList &
   QByteArray data;
   quint32 size = (sizeLBL1 - offset) < 200 ? (sizeLBL1 - offset) : 200;
   readFile(srcFile, offsetLBL1 + offset, size, data);
-  char *lbl = data.data();
+  const char *lbl = data.data();
 
-  char *pBuffer = buffer;
+  char *pBuffer = buffer.data();
   *pBuffer = 0;
 
   unsigned lastSeperator = 0;
@@ -267,9 +275,9 @@ void StrTblUtf8::get(QFile &srcFile, quint32 offset, label_type t, QStringList &
     if ((unsigned)*lbl >= 0x1B && (unsigned)*lbl <= 0x1F) {
       lastSeperator = *lbl;
       *pBuffer = 0;
-      if (strlen(buffer)) {
+      if (buffer.length()) {
         labels << processLabel(buffer, lastSeperator);
-        pBuffer = buffer;
+        pBuffer = buffer.data();
         *pBuffer = 0;
       }
       ++lbl;
@@ -283,7 +291,7 @@ void StrTblUtf8::get(QFile &srcFile, quint32 offset, label_type t, QStringList &
   }
 
   *pBuffer = 0;
-  if (strlen(buffer)) {
+  if (buffer.length()) {
     labels << processLabel(buffer, lastSeperator);
   }
 }

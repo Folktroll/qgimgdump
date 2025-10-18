@@ -2,9 +2,11 @@
 
 #include "misc.h"
 
+namespace App {
+
 class BitstrReader {
  public:
-  BitstrReader(const quint8 *pData, quint32 n, quint32 bx, quint32 by, bool extra_bit, sign_info_t &si);
+  BitstrReader(const quint8 *pData, quint32 n, quint32 bx, quint32 by, bool extra_bit, SignInfo_t &si);
   bool get(qint32 &x, qint32 &y);
 
  private:
@@ -23,6 +25,8 @@ class BitstrReader {
   quint8 bits_of_byte;    // used bits of first byte
   quint8 bits_per_y;      // bits per y coord
   quint8 bits_per_coord;  // bits per coord.
-  sign_info_t &sinfo;
+  SignInfo_t &sinfo;
   bool extraBit;
 };
+
+}  // namespace App

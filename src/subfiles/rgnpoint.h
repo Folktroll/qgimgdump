@@ -5,6 +5,8 @@
 
 #include "misc.h"
 
+namespace App {
+
 class RgnPoint {
  public:
   RgnPoint() = default;
@@ -19,3 +21,7 @@ class RgnPoint {
   QStringList labels;
   quint32 lbl_ptr = 0xFFFFFFFF;
 };
+
+using Point_t = QVector<RgnPoint>;
+
+};  // namespace App

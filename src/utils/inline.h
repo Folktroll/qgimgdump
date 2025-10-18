@@ -5,9 +5,7 @@
 #include <QtGlobal>
 #include <QtMath>
 
-namespace DebugCounters {
-static quint8 warnInvalidCoords = 0;
-}
+#include "context.h"
 
 inline double normalizeLng(double lngDeg) {
   while (lngDeg > 180.0) lngDeg -= 360.0;
@@ -21,7 +19,7 @@ inline double clampLat(double latDeg) {
   return latDeg;
 }
 
-inline QPointF toDegreesSafe(const QPointF &pointRad) {
+inline QPointF toDegreesSafe(const QPointF &pointRad, Ctx &ctx) {
   double lat = qRadiansToDegrees(pointRad.y());
   double lng = qRadiansToDegrees(pointRad.x());
 
@@ -29,7 +27,7 @@ inline QPointF toDegreesSafe(const QPointF &pointRad) {
   lng = normalizeLng(lng);
   if (qAbs(lat) == 90.0 || qAbs(lng) == 180.0) {
     // qDebug() << "[WARN] Invalid coords:" << lat << lng;
-    ++DebugCounters::warnInvalidCoords;
+    ++ctx.stats.warnInvalidCoords;
   }
   return QPointF(lng, lat);
 }
@@ -80,8 +78,7 @@ inline static int formatDouble(char *buffer, double value) {
 
 inline QString roundToDigits(double value, int precision, int cut) {
   QString temp = QString::number(value, 'f', precision);
-  int decimalPoint = temp.indexOf('.');
-  if (decimalPoint != -1 && temp.length() > decimalPoint + cut + 1) {
+  if (const auto decimalPoint = temp.indexOf('.'); decimalPoint != -1 && temp.length() > decimalPoint + cut + 1) {
     return temp.left(decimalPoint + cut + 1);
   }
   return temp;

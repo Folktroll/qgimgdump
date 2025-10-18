@@ -1,34 +1,23 @@
 // Copyright (C) 2006-2025 Original authors & contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include <QCommandLineOption>
-#include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QElapsedTimer>
-#include <QException>
 #include <QFile>
-#include <QFileInfo>
-#include <QMutex>
-#include <QMutexLocker>
-#include <QPen>
-#include <QPolygonF>
-#include <QRegularExpression>
-#include <QRunnable>
-#include <QStack>
-#include <QThreadPool>
-#include <QtCore5Compat/QTextCodec>
 #include <iostream>
+
+#include "argparser.h"
+#include "context.h"
+#include "dataparser.h"
+#include "exception.h"
+#include "fileloader.h"
 
 #ifdef _DEBUG
 #include <crtdbg.h>
 #endif
 
-#include <cmath>
-
-#include "exception.h"
-#include "imgdump.h"
-#include "misc.h"
+using namespace App;
 
 int main(int argc, char *argv[]) {
 #ifdef _DEBUG
@@ -40,7 +29,42 @@ int main(int argc, char *argv[]) {
   try {
     QElapsedTimer timerMain;
     timerMain.start();
-    ImgDump app(argc, argv);
+
+    auto app = QCoreApplication(argc, argv);
+
+    Ctx ctx;
+
+    ArgParser argParser(ctx);
+    argParser.parseArguments(argc, argv);
+
+    ctx.io.srcFile.setFileName(ctx.config.inputFile);
+
+    if (!ctx.io.srcFile.open(QIODevice::ReadOnly)) {
+      throw Exception("Failed to open file: " + ctx.config.inputFile);
+    }
+
+    auto fileLoader = FileLoader(ctx);
+    fileLoader.readFat();
+    DataParser parser(ctx);
+    // readSubmaps(srcFile, config);
+    // readObjects(srcFile, config);
+
+    // writeObjects(srcFile);
+
+    // QElapsedTimer totalTimer;
+    // QElapsedTimer timer;
+    // quint64 method1Time = 0;
+    // quint64 method2Time = 0;
+    // enum class ProccessWarnings {}  // Removed invalid enum declaration
+    // #define TRE_MAP_LEVEL(r) ((r)->zoom & 0x0f)
+    // #define TRE_MAP_INHER(r) (((r)->zoom & 0x80) != 0)
+    // QMutex mutex;
+
+    if (ctx.io.srcFile.isOpen()) {
+      ctx.io.srcFile.close();
+    }
+
+    qDebug() << "✅ Done.";
     qDebug() << "Run time:" << QString::number(timerMain.elapsed() / 1000) << "sec.";
   } catch (const Exception &e) {
     fflush(stdout);
