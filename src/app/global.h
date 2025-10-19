@@ -26,4 +26,6 @@ constexpr int D180 = 180;
 #define __gar_ptr_load_uint32_t(p) (*((uint32_t *)(p)))
 #define __gar_ptr_load_int32_t(p) (*((int32_t *)(p)))
 
+#define PRINT_HDR(field) printData(#field, field)
+
 using quint24 = std::array<quint8, 3>;

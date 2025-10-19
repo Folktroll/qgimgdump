@@ -1,7 +1,7 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 project(qgimgdump VERSION 1.0.0 LANGUAGES CXX C)
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_PREFIX_PATH "C:/Qt/6.9.1/msvc2022_64")
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_SOURCE_DIR}/bin)
 set(CMAKE_BUILD_TYPE Release)
