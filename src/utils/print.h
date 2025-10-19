@@ -1,42 +1,34 @@
 #pragma once
 
 #include <QString>
-#include <algorithm>
+#include <cctype>
+#include <format>
 #include <iomanip>
 #include <iostream>
+#include <string>
 #include <type_traits>
+#include <vector>
 
 namespace App {
 
+// --- Options for printing ---
 struct PrintOptions {
-  bool showHex = true;
-  bool showAscii = true;
-  bool showSize = false;
-  int maxElements = 0;
-  bool compactHex = false;
+  bool showHex = true;      // show hex values
+  bool showAscii = true;    // show ASCII chars
+  bool showSize = false;    // show container size
+  int maxElements = 0;      // limit number of elements to show
+  bool compactHex = false;  // 0x00 vs (0x) 00 11 22
+
+  bool shouldShowHex(const std::string_view &label, bool isUnsigned) const {
+    if (showHex) return true;
+    static const std::vector<std::string> hexKeywords = {"offset", "size", "flag", "type", "mask", "addr", "crc"};
+    for (const auto &kw : hexKeywords)
+      if (label.find(kw) != std::string::npos) return true;
+    return isUnsigned;
+  }
 };
 
-template <typename Container>
-void printAsciiData(const Container &data, size_t elementsToShow) {
-  size_t count = 0;
-  for (const auto &element : data) {
-    if (count++ >= elementsToShow) break;
-    auto c = static_cast<char>(element);
-    std::cout << ((c >= 32 && c <= 126) ? c : '.');
-  }
-}
-
-template <typename Container>
-void printHexData(const Container &data, size_t elementsToShow, bool compact) {
-  size_t count = 0;
-  for (const auto &element : data) {
-    if (count++ >= elementsToShow) break;
-    std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<quint8>(element));
-    if (!compact && count < elementsToShow) std::cout << " ";
-  }
-  if (!compact && count > 0) std::cout << " ";
-}
-
+// --- Check if type is container ---
 template <typename T, typename = void>
 struct is_container : std::false_type {};
 
@@ -46,76 +38,137 @@ struct is_container<T, std::void_t<decltype(std::begin(std::declval<T>())), decl
 template <typename T>
 constexpr bool is_container_v = is_container<T>::value;
 
-template <typename Container>
-void printContainer(const Container &data, const PrintOptions &options) {
-  using std::size;
+// --- Print label ---
+inline void printLabel(const std::string &label) {
+  std::cout << std::format("{:>20}: ", label);  // right-align
+}
 
-  const size_t containerSize = size(data);
+// --- Print single value ---
+template <typename T>
+void printSingleValue(const std::string &label, const T &data, const PrintOptions &options) {
+  bool isUnsigned = std::is_unsigned_v<T>;
+  bool asHex = options.shouldShowHex(label, isUnsigned);
+
+  printLabel(label);
+
+  if (asHex) {
+    std::cout << std::format("0x{:0{}X}", static_cast<uint64_t>(data), sizeof(T) * 2);
+  } else {
+    std::cout << data;
+  }
+
+  std::cout << std::endl;
+}
+
+template <typename Container>
+void printAsciiData(const Container &data, size_t elementsToShow) {
+  size_t count = 0;
+  std::ios oldState(nullptr);
+  oldState.copyfmt(std::cout);
+  for (const auto &element : data) {
+    if (count++ >= elementsToShow) break;
+    auto c = static_cast<char>(element);
+    std::cout << ((c >= 32 && c <= 126) ? c : '.');
+  }
+  std::cout.copyfmt(oldState);
+}
+
+// --- Print container ---
+template <typename Container>
+void printContainer(const std::string &label, const Container &data, const PrintOptions &options) {
+  using Value = typename Container::value_type;
+  const size_t containerSize = data.size();
   const size_t elementsToShow = options.maxElements > 0 ? std::min(static_cast<size_t>(options.maxElements), containerSize) : containerSize;
 
+  printLabel(label);
+
   if (options.showSize) {
-    std::cout << "[" << containerSize << "] ";
+    std::cout << std::format("[{}] ", containerSize);
   }
 
-  if (options.showHex) {
-    printHexData(data, elementsToShow, options.compactHex);
+  // Decide if we print hex
+  bool shouldHex = options.showHex || std::is_integral_v<Value> || std::is_enum_v<Value>;
+
+  if (shouldHex) {
+    if (options.compactHex) {
+      std::cout << "0x";
+    } else {
+      std::cout << "(0x) ";
+    }
+
+    size_t count = 0;
+    for (const auto &element : data) {
+      if (count++ >= elementsToShow) break;
+      std::cout << std::format("{:02X}", static_cast<unsigned char>(element));
+      if (!options.compactHex && count < elementsToShow) std::cout << " ";
+    }
   }
 
+  // Print ASCII if requested
   if (options.showAscii) {
-    if (options.showHex) std::cout << "| ";
-    printAsciiData(data, elementsToShow);
+    if (shouldHex) std::cout << " -> '";
+    size_t count = 0;
+    for (const auto &element : data) {
+      if (count++ >= elementsToShow) break;
+      auto c = static_cast<unsigned char>(element);
+      std::cout << (std::isprint(c) ? static_cast<char>(c) : '.');
+    }
   }
 
   if (elementsToShow < containerSize) {
     std::cout << "...";
   }
 
+  if (options.showAscii && shouldHex) std::cout << "'";
   std::cout << std::endl;
 }
 
+// --- Core printing implementation ---
 template <typename T>
-void printSingleValue(const T &data, const PrintOptions &options) {
-  if constexpr (std::is_same_v<T, std::array<quint8, 3>>) {
-    quint32 tmp = static_cast<quint32>(data[0]) | (static_cast<quint32>(data[1]) << 8) | (static_cast<quint32>(data[2]) << 16);
-    std::printf("%f (0x%06X, %i)\n", GRMN_DEG(tmp), tmp, tmp);
-  } else if constexpr (std::is_unsigned_v<T>) {
-    if constexpr (std::is_same_v<T, quint8>)
-      std::printf("%02X\n", data);
-    else if constexpr (std::is_same_v<T, quint16>)
-      std::printf("%04X\n", data);
-    else if constexpr (std::is_same_v<T, quint32>)
-      std::printf("%08X\n", data);
-    else
-      std::printf("%X\n", data);
-  } else {
-    std::printf("%i\n", static_cast<int>(data));
-  }
-}
-
-// core
-template <typename T>
-void printDataImpl(const std::string &label, const T &data, PrintOptions options = {}) {
-  std::cout << std::setw(30) << std::left << label;
-
+void printDataImpl(const std::string &label, const T &data, const PrintOptions &options = {}) {
   if constexpr (is_container_v<T>) {
-    printContainer(data, options);
+    printContainer(label, data, options);
   } else {
-    printSingleValue(data, options);
+    printSingleValue(label, data, options);
   }
 }
 
-// helpers
+// --- Helper ---
+constexpr bool isXLabel(const char *label, size_t len) {
+  if (len == 0 || label[0] != 'x') return false;
+
+  if (len == 5 || len == 9) return true;
+  if (len == 10) return label[5] == '_';
+
+  return false;
+}
+
+// convenience overload за std::string_view
+constexpr bool isXLabel(std::string_view label) {
+  return isXLabel(label.data(), label.size());
+}
+
 template <typename T>
 void printData(const std::string &label, const T &data) {
   PrintOptions options;
   options.showHex = is_container_v<T> || std::is_unsigned_v<T>;
-  options.showAscii = is_container_v<T>;
+
+  if (isXLabel(label)) {
+    options.compactHex = true;
+    options.showAscii = false;
+  } else if constexpr (is_container_v<T>) {
+    using ValueType = typename T::value_type;
+    options.showAscii = std::is_same_v<ValueType, quint8> || std::is_same_v<ValueType, char>;
+  } else {
+    options.showAscii = false;
+  }
+
   printDataImpl(label, data, options);
 }
 
 template <typename Container>
 void printCompact(const std::string &label, const Container &data, int maxElements = 0) {
-  printData(label, data, PrintOptions{true, false, false, maxElements, true});
+  printDataImpl(label, data, PrintOptions{true, false, false, maxElements, true});
 }
 
 }  // namespace App
