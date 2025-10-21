@@ -1,17 +1,19 @@
 #include "fileloader.h"
 
 #include <QDebug>
+#include <algorithm>
+#include <ranges>
 
 #include "context.h"
 #include "exception.h"
+#include "hdr/block.h"
+#include "hdr/fat.h"
+#include "hdr/supp.h"
 #include "misc.h"
-#include "structs/base_header.h"
-#include "structs/fat_header.h"
-#include "structs/img_headers.h"
 
 using namespace App;
 
-FileLoader::FileLoader(Ctx &ctx) : ctx(ctx) {
+FileLoader::FileLoader(Ctx &ctx) : ctx(ctx), srcFile(*ctx.io.srcFile) {
   // @todo: as arg: config.codec
   ctx.codec = QTextCodec::codecForName("Windows-1251");
   if (!ctx.codec) {
@@ -20,17 +22,19 @@ FileLoader::FileLoader(Ctx &ctx) : ctx(ctx) {
 }
 
 void FileLoader::readFat() const {
-  // QFile &srcFile
-  ctx.submaps.clear();
+  ctx.subMaps.clear();
 
   ImgHdr::SSupp hdrSupp;
-  ctx.io.srcFile.seek(0);
-  ctx.io.srcFile.read((char *)&hdrSupp, sizeof(ImgHdr::SSupp));
-  ctx.io.srcFile.seek(hdrSupp.offsetFAT * 0x200);
+  srcFile.seek(0);
+  srcFile.read((char *)&hdrSupp, sizeof(ImgHdr::SSupp));
+  srcFile.seek(hdrSupp.offsetFAT * 0x200);
+
+  ctx.hdrSupp = hdrSupp;
 
   if (ctx.config.debugInfo) {
-    misc::printf("----- IMG Header ----- size(%08X)\n", sizeof(ImgHdr::SSupp));
+    misc::Logger::printf("----- IMG Header ----- size(%08X)\n", sizeof(ImgHdr::SSupp));
     hdrSupp.print();
+    misc::Logger::print("");
   }
 
   ctx.mask.x8 = hdrSupp.xorByte;
@@ -51,52 +55,47 @@ void FileLoader::readFat() const {
     throw Exception("Bad file format");
   }
 
-  ctx.nameStr = hdrSupp.desc1.data();
+  size_t blockSize = hdrSupp.blockSize();
 
-  size_t blocksize = hdrSupp.blocksize();
-
-  qDebug() << "---- FAT ----";
-  ImgHdr::SFat FATBlock;
-  ctx.io.srcFile.read((char *)&FATBlock, sizeof(ImgHdr::SFat));
-  while (FATBlock.flag == 1) {
-    if (ctx.io.srcFile.atEnd()) {
+  ImgHdr::SFat hdrFat;
+  srcFile.read((char *)&hdrFat, sizeof(ImgHdr::SFat));
+  while (hdrFat.flag == 1) {
+    if (srcFile.atEnd()) {
       throw Exception("Premature end of file.");
     }
 
-    if (FATBlock.size != 0) {
-      const auto &submapStr = FATBlock.name.data();
-      // char submapStr[sizeof(FATBlock.name) + 1] = {0};
-      // memcpy(submapStr, FATBlock.name, sizeof(FATBlock.name));
+    if (hdrFat.size != 0) {
+      misc::Logger::print("---- FAT ----");
+      hdrFat.print();
 
-      const auto &subfileStr = FATBlock.type.data();
-      // char subfileStr[sizeof(FATBlock.type) + 1] = {0};
-      // memcpy(subfileStr, FATBlock.type, sizeof(FATBlock.type));
+      const auto &subMapStr = misc::arrayToQString(hdrFat.name);
+      const auto &subBlockStr = misc::arrayToQString(hdrFat.type);
 
-      if (submapStr[0] == 0x20) {
-        qDebug() << "Skip empty subfile type:" << submapStr << subfileStr;
-        // } else if (strcmp(submapStr, "00235022") != 0) {
-        //   qDebug() << "Skip subfile by name:" << submapStr;
-      } else if (ctx.submaps.contains(submapStr) && subfileStr != "GMP" && ctx.submaps[submapStr].subFiles.keys().contains(subfileStr)) {
+      if (subMapStr.at(0) == " ") {
+        // qDebug() << "Skip empty block type:" << subMapStr << subBlockStr;
+        // } else if (strcmp(subMapStr, "00235022") != 0) {
+        //   qDebug() << "Skip block by name:" << subMapStr;
+      } else if (ctx.subMaps.contains(subMapStr) && subBlockStr != "GMP" && ctx.subMaps[subMapStr].subBlocks.keys().contains(subBlockStr)) {
         // or check FATBlock.part > 0x00 ?
-        qDebug() << "Skip duplicate subfile type:" << submapStr << subfileStr;
-      } else if (subfileStr == "SRT" || subfileStr == "MDR" || subfileStr == "MD2" || subfileStr == "TYP") {
-        qDebug() << "Skip useless subfile type:" << submapStr << subfileStr;
-        // } else if (subfileStr == "NET" || subfileStr == "NOD" || subfileStr == "LBL" || subfileStr == "MPS") {
-        //   qDebug() << "Skip subfile type (for debug purpose):" << submapStr << subfileStr;
+        qDebug() << "Skip duplicate block type:" << subMapStr << subBlockStr;
+      } else if (subBlockStr == "SRT" || subBlockStr == "MDR" || subBlockStr == "MD2" || subBlockStr == "TYP") {
+        qDebug() << "Skip useless block type:" << subMapStr << subBlockStr;
+      } else if (subBlockStr == "NET" || subBlockStr == "NOD" || subBlockStr == "LBL" || subBlockStr == "MPS") {
+        qDebug() << "Skip block type (for debug purpose):" << subMapStr << subBlockStr;
       } else {
-        SSubMap &submap = ctx.submaps[submapStr];
-        submap.name = submapStr;
+        SSubMap &subMap = ctx.subMaps[subMapStr];
+        subMap.name = subMapStr;
 
-        SSubFile &part = submap.subFiles[subfileStr];
-        part.size = gar_load(quint32, FATBlock.size);
-        part.offset = (quint32)(gar_load(uint16_t, FATBlock.blocks[0]) * blocksize);
+        SSubBlock &part = subMap.subBlocks[subBlockStr];
+        part.size = gar_load(quint32, hdrFat.size);
+        part.offset = (quint32)(gar_load(uint16_t, hdrFat.blocks[0]) * blockSize);
 
-        // @todo: more checks, maybe NT or checl 0x0D flags for bit 0x80
-        submap.isPseudoNt = subfileStr == "GMP";
+        // @todo: more checks, maybe NT or check 0x0D flags for bit 0x80
+        subMap.isPseudoNt = subBlockStr == "GMP";
       }
     }
 
-    ctx.io.srcFile.read((char *)&FATBlock, sizeof(ImgHdr::SFat));
+    srcFile.read((char *)&hdrFat, sizeof(ImgHdr::SFat));
   }
 }
 

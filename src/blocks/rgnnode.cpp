@@ -1,20 +1,20 @@
-#include "rgnpoint.h"
+#include "rgnnode.h"
 
 #include "lbl.h"
 #include "misc.h"
 
 using namespace App;
 
-quint32 RgnPoint::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData) {
+quint32 RgnNode::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData) {
   type = (quint16)(*pData) << 8;
 
   ++pData;
 
-  lbl_ptr = gar_ptr_load(uint24_t, pData);
+  lblPtr = gar_ptr_load(uint24_t, pData);
 
-  hasSubType = lbl_ptr & 0x00800000;
-  isLbl6 = lbl_ptr & 0x00400000;
-  lbl_ptr = lbl_ptr & 0x003FFFFF;
+  hasSubType = lblPtr & 0x00800000;
+  isLbl6 = lblPtr & 0x00400000;
+  lblPtr = lblPtr & 0x003FFFFF;
 
   pData += 3;
 
@@ -25,7 +25,7 @@ quint32 RgnPoint::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, co
 
   qint32 x1 = ((qint32)dLng << shift) + iCenterLon;
   qint32 y1 = ((qint32)dLat << shift) + iCenterLat;
-  pos = QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
+  node = QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
 
   if (hasSubType) {
     type |= *pData;
@@ -35,7 +35,7 @@ quint32 RgnPoint::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, co
   return 8;
 }
 
-quint32 RgnPoint::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData, const quint8 *pEnd) {
+quint32 RgnNode::decodeEx(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData, const quint8 *pEnd) {
   quint32 byte_size = 6;
   quint8 subtype;
 
@@ -67,13 +67,13 @@ quint32 RgnPoint::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift,
 
   x1 = ((qint32)dLng << shift) + iCenterLon;
   y1 = ((qint32)dLat << shift) + iCenterLat;
-  pos = QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
+  node = QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
 
   if (subtype & 0x20) {
     byte_size += 3;
-    lbl_ptr = gar_ptr_load(uint24_t, pData);
-    isLbl6 = lbl_ptr & 0x00400000;
-    lbl_ptr &= 0x003FFFFF;
+    lblPtr = gar_ptr_load(uint24_t, pData);
+    isLbl6 = lblPtr & 0x00400000;
+    lblPtr &= 0x003FFFFF;
   }
 
   return byte_size;

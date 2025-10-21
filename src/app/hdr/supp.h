@@ -4,9 +4,9 @@
 
 #include "print.h"
 
-#pragma pack(push, 1)
-
 namespace ImgHdr {
+
+#pragma pack(push, 1)
 
 using App::printData;
 
@@ -53,7 +53,7 @@ struct SSupp {
   quint32 nSectors = 0;                        // 01CA_01CD
   std::array<quint8, 0x30> x01CE_01FD = {0};   // 01CE_01FD
   quint16 terminator = 0xAA55;                 // 01FE_01FF
-  quint32 blocksize() const { return 1 << (e1 + e2); }
+  quint32 blockSize() const { return 1 << (e1 + e2); }
 
   void print() const {
     PRINT_HDR(xorByte);
@@ -98,9 +98,10 @@ struct SSupp {
     PRINT_HDR(nSectors);
     PRINT_HDR(x01CE_01FD);
     PRINT_HDR(terminator);
+    PRINT_ENDL;
   }
 };
 
-};  // namespace ImgHdr
-
 #pragma pack(pop)
+
+};  // namespace ImgHdr

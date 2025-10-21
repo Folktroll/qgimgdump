@@ -16,6 +16,7 @@ class FileLoader {
 
  private:
   Ctx &ctx;
+  QFile &srcFile;
 };
 
 }  // namespace App

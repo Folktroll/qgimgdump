@@ -9,7 +9,12 @@
 #include <type_traits>
 #include <vector>
 
+#include "global.h"
+
 namespace App {
+
+#define PRINT_HDR(field) printData(#field, field)
+#define PRINT_HDR_OFF(field, off) printData(#field, field + off)
 
 // --- Options for printing ---
 struct PrintOptions {
@@ -57,7 +62,7 @@ void printSingleValue(const std::string &label, const T &data, const PrintOption
     std::cout << data;
   }
 
-  std::cout << std::endl;
+  PRINT_ENDL;
 }
 
 template <typename Container>
@@ -120,7 +125,7 @@ void printContainer(const std::string &label, const Container &data, const Print
   }
 
   if (options.showAscii && shouldHex) std::cout << "'";
-  std::cout << std::endl;
+  PRINT_ENDL;
 }
 
 // --- Core printing implementation ---

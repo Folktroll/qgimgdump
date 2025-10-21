@@ -19,19 +19,6 @@ inline double clampLat(double latDeg) {
   return latDeg;
 }
 
-inline QPointF toDegreesSafe(const QPointF &pointRad, Ctx &ctx) {
-  double lat = qRadiansToDegrees(pointRad.y());
-  double lng = qRadiansToDegrees(pointRad.x());
-
-  lat = clampLat(lat);
-  lng = normalizeLng(lng);
-  if (qAbs(lat) == 90.0 || qAbs(lng) == 180.0) {
-    // qDebug() << "[WARN] Invalid coords:" << lat << lng;
-    ++ctx.stats.warnInvalidCoords;
-  }
-  return QPointF(lng, lat);
-}
-
 #ifdef SANITY_CHECK
 inline double haversineDistance(double lat1, double lon1, double lat2, double lon2) {
   static const double R = 6371000.0;  // earth radius in meters
@@ -65,7 +52,7 @@ static inline QString debugHex(const quint8 *pData, int len) {
   return byteArray.toHex(' ');
 }
 
-inline static int formatDouble(char *buffer, double value) {
+inline static QString formatDouble(double value) {
   auto intPart = static_cast<int>(value);
   auto fracPart = static_cast<int>((value - intPart) * 100000 + 0.5);
 
@@ -73,7 +60,7 @@ inline static int formatDouble(char *buffer, double value) {
     fracPart = -fracPart;
   }
 
-  return sprintf(buffer, "%d.%05d", intPart, fracPart);
+  return QString("%1.%2").arg(intPart).arg(fracPart, 5, 10, QChar('0'));
 }
 
 inline QString roundToDigits(double value, int precision, int cut) {

@@ -12,6 +12,7 @@
 #include "dataparser.h"
 #include "exception.h"
 #include "fileloader.h"
+#include "filewriter.h"
 
 #ifdef _DEBUG
 #include <crtdbg.h>
@@ -30,38 +31,29 @@ int main(int argc, char *argv[]) {
     QElapsedTimer timerMain;
     timerMain.start();
 
-    auto app = QCoreApplication(argc, argv);
-
     Ctx ctx;
 
     ArgParser argParser(ctx);
     argParser.parseArguments(argc, argv);
 
-    ctx.io.srcFile.setFileName(ctx.config.inputFile);
+    ctx.io.srcFile = std::make_shared<QFile>(ctx.config.inputFile);
 
-    if (!ctx.io.srcFile.open(QIODevice::ReadOnly)) {
+    if (!ctx.io.srcFile->open(QIODevice::ReadOnly)) {
       throw Exception("Failed to open file: " + ctx.config.inputFile);
     }
 
-    auto fileLoader = FileLoader(ctx);
+    FileLoader fileLoader(ctx);
     fileLoader.readFat();
-    DataParser parser(ctx);
-    // readSubmaps(srcFile, config);
-    // readObjects(srcFile, config);
 
-    // writeObjects(srcFile);
+    DataParser dataParser(ctx);
+    dataParser.readSubmaps();
+    dataParser.readObjects();
 
-    // QElapsedTimer totalTimer;
-    // QElapsedTimer timer;
-    // quint64 method1Time = 0;
-    // quint64 method2Time = 0;
-    // enum class ProccessWarnings {}  // Removed invalid enum declaration
-    // #define TRE_MAP_LEVEL(r) ((r)->zoom & 0x0f)
-    // #define TRE_MAP_INHER(r) (((r)->zoom & 0x80) != 0)
-    // QMutex mutex;
+    FileWriter fileWriter(ctx);
+    fileWriter.exportObjects();
 
-    if (ctx.io.srcFile.isOpen()) {
-      ctx.io.srcFile.close();
+    if (ctx.io.srcFile->isOpen()) {
+      ctx.io.srcFile->close();
     }
 
     qDebug() << "✅ Done.";

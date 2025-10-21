@@ -2,33 +2,33 @@
 
 using namespace App;
 
-BitstrReader::BitstrReader(const quint8 *pData, quint32 n, quint32 bx, quint32 by, bool extra_bit, SignInfo_t &si)
+BitstrReader::BitstrReader(const quint8 *pData, quint32 index, quint32 bx, quint32 by, bool extraBit, SignInfo_t &si)
     : reg(0),
       pData(pData),
-      bytes(n),
-      xmask(0xFFFFFFFF),
-      ymask(0xFFFFFFFF),
-      xsign(1),
-      ysign(1),
-      xsign2(2),
-      ysign2(2),
+      bytes(index),
+      xMask(0xFFFFFFFF),
+      yMask(0xFFFFFFFF),
+      xSign(1),
+      ySign(1),
+      xSign2(2),
+      ySign2(2),
       bits(0),
-      bits_per_x(bx),
-      bits_per_y(by),
-      bits_per_coord(bx + by + (extra_bit ? 1 : 0)),
-      sinfo(si),
-      extraBit(extra_bit) {
+      bitsPerX(bx),
+      bitsPerY(by),
+      bitsPerCoord(bx + by + (extraBit ? 1 : 0)),
+      sInfo(si),
+      extraBit(extraBit) {
   // create bit masks
-  xmask = (xmask << (32 - bx)) >> (32 - bx);
-  ymask = (ymask << (32 - by)) >> (32 - by);
+  xMask = (xMask << (32 - bx)) >> (32 - bx);
+  yMask = (yMask << (32 - by)) >> (32 - by);
 
-  xsign <<= (bits_per_x - 1);
-  ysign <<= (bits_per_y - 1);
-  xsign2 = xsign << 1;
-  ysign2 = ysign << 1;
+  xSign <<= (bitsPerX - 1);
+  ySign <<= (bitsPerY - 1);
+  xSign2 = xSign << 1;
+  ySign2 = ySign << 1;
 
   // add sufficient bytes for the first coord. pair
-  fill(bits_per_coord + si.sign_info_bits);
+  fill(bitsPerCoord + si.sign_info_bits);
 
   // get rid of sign setup bytes
   reg >>= si.sign_info_bits;
@@ -37,7 +37,7 @@ BitstrReader::BitstrReader(const quint8 *pData, quint32 n, quint32 bx, quint32 b
 
 bool BitstrReader::get(qint32 &x, qint32 &y) {
   x = y = 0;
-  if (bits < (bits_per_coord)) {
+  if (bits < (bitsPerCoord)) {
     return false;
   }
 
@@ -47,61 +47,61 @@ bool BitstrReader::get(qint32 &x, qint32 &y) {
     bits -= 1;
   }
 
-  if (sinfo.x_has_sign) {
+  if (sInfo.x_has_sign) {
     qint32 tmp = 0;
-    while (1) {
-      tmp = reg & xmask;
-      if (tmp != xsign) {
+    while (true) {
+      tmp = reg & xMask;
+      if (tmp != xSign) {
         break;
       }
       x += tmp - 1;
-      reg >>= bits_per_x;
-      bits -= bits_per_x;
-      fill(bits_per_y + bits_per_x);
+      reg >>= bitsPerX;
+      bits -= bitsPerX;
+      fill(bitsPerY + bitsPerX);
     }
-    if (tmp < xsign) {
+    if (tmp < xSign) {
       x += tmp;
     } else {
-      x = tmp - (xsign2)-x;
+      x = tmp - xSign2 - x;
     }
   } else {
-    x = reg & xmask;
-    if (sinfo.nx) {
+    x = reg & xMask;
+    if (sInfo.nx) {
       x = -x;
     }
   }
-  reg >>= bits_per_x;
-  bits -= bits_per_x;
+  reg >>= bitsPerX;
+  bits -= bitsPerX;
 
   // take y coord., add sign if neccessary, shift register by bits per y coord.
-  if (sinfo.y_has_sign) {
+  if (sInfo.y_has_sign) {
     qint32 tmp = 0;
-    while (1) {
-      tmp = reg & ymask;
-      if (tmp != ysign) {
+    while (true) {
+      tmp = reg & yMask;
+      if (tmp != ySign) {
         break;
       }
       y += tmp - 1;
-      reg >>= bits_per_y;
-      bits -= bits_per_y;
-      fill(bits_per_y);
+      reg >>= bitsPerY;
+      bits -= bitsPerY;
+      fill(bitsPerY);
     }
-    if (tmp < ysign) {
+    if (tmp < ySign) {
       y += tmp;
     } else {
-      y = tmp - (ysign2)-y;
+      y = tmp - ySign2 - y;
     }
   } else {
-    y = reg & ymask;
-    if (sinfo.ny) {
+    y = reg & yMask;
+    if (sInfo.ny) {
       y = -y;
     }
   }
-  reg >>= bits_per_y;
-  bits -= bits_per_y;
+  reg >>= bitsPerY;
+  bits -= bitsPerY;
 
   // fill register until it has enought bits for one coord. pair again
-  fill(bits_per_coord);
+  fill(bitsPerCoord);
   return true;
 }
 

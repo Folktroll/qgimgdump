@@ -9,7 +9,7 @@
 
 using namespace App;
 
-StrTbl::StrTbl(Ctx &ctx) : ctx(ctx) {
+StrTbl::StrTbl(Ctx &ctx) : ctx(ctx), srcFile(*ctx.io.srcFile) {
   if (ctx.codepage != 0) {
     std::string strcp;
     if (1250 <= ctx.codepage && ctx.codepage <= 1258) {
@@ -42,22 +42,22 @@ StrTbl::StrTbl(Ctx &ctx) : ctx(ctx) {
 
 StrTbl::~StrTbl() = default;
 
-void StrTbl::registerLBL1(const quint32 offset, const quint32 size, const quint8 shift) {
-  offsetLBL1 = offset;
-  sizeLBL1 = size;
-  addrshift1 = shift;
+void StrTbl::registerLbl1(const quint32 offset, const quint32 size, const quint8 shift) {
+  offsetLbl1 = offset;
+  sizeLbl1 = size;
+  addrShift1 = shift;
 }
-void StrTbl::registerLBL6(const quint32 offset, const quint32 size) {
-  offsetLBL6 = offset;
-  sizeLBL6 = size;
+void StrTbl::registerLbl6(const quint32 offset, const quint32 size) {
+  offsetLbl6 = offset;
+  sizeLbl6 = size;
 }
-void StrTbl::registerNET1(const quint32 offset, const quint32 size, const quint8 shift) {
-  offsetNET1 = offset;
-  sizeNET1 = size;
-  addrshift2 = shift;
+void StrTbl::registerNet1(const quint32 offset, const quint32 size, const quint8 shift) {
+  offsetNet1 = offset;
+  sizeNet1 = size;
+  addrShift2 = shift;
 }
 
-void StrTbl::readFile(QFile &srcFile, quint32 offset, quint32 size, QByteArray &data) const {
+void StrTbl::readFile(quint32 offset, quint32 size, QByteArray &data) const {
   if (offset + size > static_cast<quint32>(srcFile.size())) {
     data.clear();
     qWarning() << "[WARN] Offset and size exceed file size. Aborting read operation.";
@@ -75,7 +75,7 @@ void StrTbl::readFile(QFile &srcFile, quint32 offset, quint32 size, QByteArray &
     return;
   }
 
-  // if mask == 0, no xor is necessary
+  // no xor is necessary
   if (ctx.mask.x8 == 0) {
     return;
   }
@@ -111,21 +111,21 @@ void StrTbl::readFile(QFile &srcFile, quint32 offset, quint32 size, QByteArray &
   }
 }
 
-quint32 StrTbl::getNewOffset(QFile &srcFile, const quint32 offset, LabelType t) const {
+quint32 StrTbl::getNewOffset(const quint32 offset, LabelType t) const {
   quint32 newOffset = offset;
 
   if (t == LabelType::poi) {
     QByteArray buf;
-    readFile(srcFile, offsetLBL6 + offset, sizeof(quint32), buf);
+    readFile(offsetLbl6 + offset, sizeof(quint32), buf);
     newOffset = gar_ptr_load(uint32_t, buf.data());
     newOffset = (newOffset & 0x003FFFFF);
   } else if (t == LabelType::net) {
-    if (offsetNET1 == 0) {
+    if (offsetNet1 == 0) {
       return 0xFFFFFFFF;
     }
 
     QByteArray data;
-    readFile(srcFile, offsetNET1 + (offset << addrshift2), sizeof(quint32), data);
+    readFile(offsetNet1 + (offset << addrShift2), sizeof(quint32), data);
     newOffset = gar_ptr_load(uint32_t, data.data());
     if (newOffset & 0x00400000) {
       return 0xFFFFFFFF;
@@ -133,16 +133,19 @@ quint32 StrTbl::getNewOffset(QFile &srcFile, const quint32 offset, LabelType t) 
     newOffset = (newOffset & 0x003FFFFF);
   }
 
-  newOffset <<= addrshift1;
+  newOffset <<= addrShift1;
   return newOffset;
 }
 
-QString StrTbl::processLabel(std::string buf, unsigned lastSeperator) const {
+// QString StrTbl::processLabel(std::string buf, unsigned lastSeperator) const {
+QString StrTbl::processLabel(const char *buf, unsigned lastSeperator) const {
   QString label;
   if (ctx.codepage != 0) {
-    label = ctx.codec->toUnicode(buf.data());
+    // label = ctx.codec->toUnicode(buf.data());
+    label = ctx.codec->toUnicode(buf);
   } else {
-    label = buf.data();
+    // label = buf.data();
+    label = buf;
   }
 
   if (lastSeperator == 0x1F) {
@@ -161,19 +164,22 @@ StrTbl6::StrTbl6(Ctx &ctx) : StrTbl(ctx) {};
 
 StrTbl6::~StrTbl6() = default;
 
-void StrTbl6::get(QFile &srcFile, quint32 offset, LabelType t, QStringList &labels) {
+void StrTbl6::get(quint32 offset, LabelType t, QStringList &labels) {
   labels.clear();
 
-  offset = getNewOffset(srcFile, offset, t);
+  offset = getNewOffset(offset, t);
 
   if (offset == 0xFFFFFFFF) {
     return;
   }
 
-  if (offset > sizeLBL1) {
+  if (offset > sizeLbl1) {
     return;
   }
 
+  // local buf to avoid relying on external/global buf type
+  // std::string buf;
+  char buf[256];
   quint8 c1 = 0;
   quint8 c2 = 0;
   quint32 idx = 0;
@@ -181,16 +187,17 @@ void StrTbl6::get(QFile &srcFile, quint32 offset, LabelType t, QStringList &labe
   bits = 0;
 
   QByteArray data;
-  quint32 size = (sizeLBL1 - offset) < 200 ? (sizeLBL1 - offset) : 200;
+  quint32 size = (sizeLbl1 - offset) < 200 ? (sizeLbl1 - offset) : 200;
 
-  readFile(srcFile, offsetLBL1 + offset, size, data);
+  readFile(offsetLbl1 + offset, size, data);
 
   p = (quint8 *)data.data();
 
   fill();
 
   unsigned lastSeperator = 0;
-  while (idx < (sizeof(buffer) - 1)) {
+  buf[0] = 0;
+  while (idx < (sizeof(buf) - 1)) {
     c1 = reg >> 26;
     reg <<= 6;
     bits -= 6;
@@ -207,33 +214,35 @@ void StrTbl6::get(QFile &srcFile, quint32 offset, LabelType t, QStringList &labe
         reg <<= 6;
         bits -= 6;
         fill();
-        buffer[idx] = str6tbl2[c1];
+        buf[idx] = str6tbl2[c1];
         idx++;
       } else if (c1 == 0x1B) {
         c1 = reg >> 26;
         reg <<= 6;
         bits -= 6;
         fill();
-        buffer[idx] = str6tbl3[c1];
+        buf[idx] = str6tbl0[c1];
         idx++;
       } else if (c1 > 0x1C && c1 < 0x20) {
         lastSeperator = c1;
-        buffer[idx] = 0;
-        if (buffer.length()) {
-          labels << processLabel(buffer, lastSeperator);
+        buf[idx] = 0;
+        // if (buf.length()) {
+        if (strlen(buf)) {
+          labels << processLabel(buf, lastSeperator);
         }
         idx = 0;
-        buffer[0] = 0;
+        buf[0] = 0;
       }
     } else {
-      buffer[idx] = str6tbl1[c1];
+      buf[idx] = str6tbl1[c1];
       idx++;
     }
   }
 
-  buffer[idx] = 0;
-  if (buffer.length()) {
-    labels << processLabel(buffer, lastSeperator);
+  buf[idx] = 0;
+  // if (buf.length()) {
+  if (strlen(buf)) {
+    labels << processLabel(buf, lastSeperator);
   }
 }
 
@@ -246,28 +255,34 @@ void StrTbl6::fill() {
   }
 }
 
-StrTblUtf8::StrTblUtf8(Ctx &ctx) : StrTbl(ctx) {};
+StrTbl9::StrTbl9(Ctx &ctx) : StrTbl(ctx) {};
 
-StrTblUtf8::~StrTblUtf8() = default;
+StrTbl9::~StrTbl9() = default;
 
-void StrTblUtf8::get(QFile &srcFile, quint32 offset, LabelType t, QStringList &labels) {
+void StrTbl9::get(quint32 offset, LabelType t, QStringList &labels) {
   labels.clear();
-  offset = getNewOffset(srcFile, offset, t);
+  offset = getNewOffset(offset, t);
 
   if (offset == 0xFFFFFFFF) {
     return;
   }
 
-  if (offset > sizeLBL1) {
+  // qDebug() << "get()" << Qt::hex << offset;
+
+  if (offset > sizeLbl1) {
     return;
   }
 
   QByteArray data;
-  quint32 size = (sizeLBL1 - offset) < 200 ? (sizeLBL1 - offset) : 200;
-  readFile(srcFile, offsetLBL1 + offset, size, data);
+  quint32 size = (sizeLbl1 - offset) < 200 ? (sizeLbl1 - offset) : 200;
+  readFile(offsetLbl1 + offset, size, data);
+  // const char *lbl = data.data();
   const char *lbl = data.data();
 
-  char *pBuffer = buffer.data();
+  // char *pBuffer = buf.data();
+  // std::string buf;
+  char buf[256];
+  char *pBuffer = buf;
   *pBuffer = 0;
 
   unsigned lastSeperator = 0;
@@ -275,9 +290,12 @@ void StrTblUtf8::get(QFile &srcFile, quint32 offset, LabelType t, QStringList &l
     if ((unsigned)*lbl >= 0x1B && (unsigned)*lbl <= 0x1F) {
       lastSeperator = *lbl;
       *pBuffer = 0;
-      if (buffer.length()) {
-        labels << processLabel(buffer, lastSeperator);
-        pBuffer = buffer.data();
+      // if (buf.length()) {
+      if (strlen(buf)) {
+        labels << processLabel(buf, lastSeperator);
+        // pBuffer = buf.data();
+        // reset local buf pointer
+        pBuffer = buf;
         *pBuffer = 0;
       }
       ++lbl;
@@ -291,7 +309,10 @@ void StrTblUtf8::get(QFile &srcFile, quint32 offset, LabelType t, QStringList &l
   }
 
   *pBuffer = 0;
-  if (buffer.length()) {
-    labels << processLabel(buffer, lastSeperator);
+  // if (buf.length()) {
+  if (strlen(buf)) {
+    // qDebug() << "buf.length()" << buf.length();
+    // qDebug() << "buf.length()" << strlen(buf);
+    labels << processLabel(buf, lastSeperator);
   }
 }

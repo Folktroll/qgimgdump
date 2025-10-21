@@ -5,9 +5,9 @@
 
 #include "global.h"
 
-#pragma pack(push, 1)
-
 namespace ImgHdr {
+
+#pragma pack(push, 1)
 
 // common header for all subtypes
 struct SComm {
@@ -38,10 +38,10 @@ struct SGmp : public SComm {
 };
 
 struct STre : public SComm {
-  quint24 northbound = {0};                // 0015_0017 - max lat
-  quint24 eastbound = {0};                 // 0018_001A - max long
-  quint24 southbound = {0};                // 001B_001D - min lat
-  quint24 westbound = {0};                 // 001E_0020 - min long, cant be +180
+  quint24 north_bound = {0};               // 0015_0017 - max lat
+  quint24 east_bound = {0};                // 0018_001A - max long
+  quint24 south_bound = {0};               // 001B_001D - min lat
+  quint24 west_bound = {0};                // 001E_0020 - min long, cant be +180
   quint32 tre1_offset = 0;                 // 0021_0024 - map levels pos
   quint32 tre1_size = 0;                   // 0025_0028
   quint32 tre2_offset = 0;                 // 0029_002C - subdiv pos
@@ -74,9 +74,9 @@ struct STre : public SComm {
   quint32 tre8_offset = 0;                 // 008A_008D - extended type overview: ln, pg, po; sorted by type (1 type 1 levels 1 subtype)
   quint32 tre8_size = 0;                   // 008E_0091
   quint16 tre8_rec_size = 0;               // 0092_0093
-  quint16 polyl2_types_num = 0;            // 0094_0095 - num ext type ln
-  quint16 polyg2_types_num = 0;            // 0096_0097 - num ext type pg
-  quint16 poi2_types_num = 0;              // 0098_0099 - num ext type pt
+  quint16 lnex_types_num = 0;              // 0094_0095 - num ext type ln
+  quint16 pgex_types_num = 0;              // 0096_0097 - num ext type pg
+  quint16 poex_types_num = 0;              // 0098_0099 - num ext type pt
   std::array<quint8, 16> key = {0};        // 009A_00A5 - map values
   std::array<quint8, 4> x00AA_00AD = {0};  // 00AA_00AD
   quint32 tre9_offset;                     // 00AE_00B1
@@ -94,14 +94,14 @@ struct STre : public SComm {
 struct SRgn : public SComm {
   quint32 rgn1_offset = 0;                  // 0015_0018 - RGN-body relative offset (new format)
   quint32 rgn1_length = 0;                  // 0019_001C
-  quint32 pg2_offset = 0;                   // 001D_0020
-  quint32 pg2_length = 0;                   // 0021_0024
+  quint32 pgex_offset = 0;                  // 001D_0020
+  quint32 pgex_length = 0;                  // 0021_0024
   std::array<quint8, 20> x0025_0038 = {0};  // 0025_0038
-  quint32 ln2_offset = 0;                   // 0039_003C
-  quint32 ln2_length = 0;                   // 003D_0040
+  quint32 lnex_offset = 0;                  // 0039_003C
+  quint32 lnex_length = 0;                  // 003D_0040
   std::array<quint8, 20> x0041_0054 = {0};  // 0041_0054
-  quint32 pt2_offset = 0;                   // 0055_0058
-  quint32 pt2_length = 0;                   // 0059_005C
+  quint32 ptex_offset = 0;                  // 0055_0058
+  quint32 ptex_length = 0;                  // 0059_005C
   std::array<quint8, 20> x005D_0070 = {0};  // 005D_0070
   quint32 rgn2_offset = 0;                  // 0071_0074
   quint32 rgn2_length = 0;                  // 0075_0078
@@ -191,6 +191,6 @@ struct SDem : public SComm {
   void print(quint32 offset) const;
 };
 
-};  // namespace ImgHdr
-
 #pragma pack(pop)
+
+};  // namespace ImgHdr

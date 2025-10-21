@@ -1,4 +1,4 @@
-#include "rgnline.h"
+#include "rgnpath.h"
 
 #include "global.h"
 #include "inline.h"
@@ -6,9 +6,9 @@
 
 using namespace App;
 
-qint32 RgnLine::maxVecSize = 0;
+qint32 RgnPath::maxVecSize = 0;
 
-quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8 *pData, const quint8 *pEnd) {
+quint32 RgnPath::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8 *pData, const quint8 *pEnd) {
   quint32 bytes_total = 10;
   bool two_byte_len;   // bitstream has a two byte length
   bool extra_bit;      // coordinates use extra bit - ??? have never seen it
@@ -19,8 +19,8 @@ quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, boo
   const quint8 *const pStart = pData;
 
   labels.clear();
-  points.resize(0);
-  points.reserve(maxVecSize);
+  path.resize(0);
+  path.reserve(maxVecSize);
   // u.resize(0);
   // v.resize(0);
   // u.reserve(maxVecSize);
@@ -45,14 +45,14 @@ quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, boo
   }
 
   /* label info
-      bit 0..21   off set into LBL subfile
+      bit 0..21   off set into LBL block
       bit 22      use extra bit for coordinates
-      bit 23      use label data of NET subfile (net1)
+      bit 23      use label data of NET block (net1)
    */
-  lbl_info = gar_ptr_load(uint24_t, pData);
-  hasNet1Label = lbl_info & 0x800000;
-  extra_bit = lbl_info & 0x400000;
-  lbl_info = lbl_info & 0x3FFFFF;
+  lblInfo = gar_ptr_load(uint24_t, pData);
+  hasNet1Label = lblInfo & 0x800000;
+  extra_bit = lblInfo & 0x400000;
+  lblInfo = lblInfo & 0x3FFFFF;
 
   pData += 3;
 
@@ -124,7 +124,7 @@ quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, boo
   // u << xy.u;
   // v << xy.v;
   // points << QPointF(qRadiansToDegrees(xy.u), qRadiansToDegrees(xy.v));
-  points << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
+  path << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
 
   // next points
   while (sr.get(x, y)) {
@@ -140,7 +140,7 @@ quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, boo
     // u << xy.u;
     // v << xy.v;
     // points << QPointF(qRadiansToDegrees(xy.u), qRadiansToDegrees(xy.v));
-    points << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
+    path << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
   }
 
   // if (maxVecSize < u.size()) {
@@ -151,17 +151,17 @@ quint32 RgnLine::decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, boo
   // v.squeeze();
   // }
 
-  if (maxVecSize < points.size()) {
-    maxVecSize = points.size();
+  if (maxVecSize < path.size()) {
+    maxVecSize = path.size();
   }
-  if (points.size() * 1.2 < maxVecSize) {
-    points.squeeze();
+  if (path.size() * 1.2 < maxVecSize) {
+    path.squeeze();
   }
 
   return bytes_total;
 }
 
-quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8 *pData, const quint8 *pEnd) {
+quint32 RgnPath::decodeEx(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, bool line, const quint8 *pData, const quint8 *pEnd) {
   quint32 bytes_total = 6;
   quint16 bs_len = 0;  // bitstream length
   quint32 subtype;     // type and subtype
@@ -172,8 +172,8 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
   const quint8 *const pStart = pData;
 
   labels.clear();
-  points.resize(0);
-  points.reserve(maxVecSize);
+  path.resize(0);
+  path.reserve(maxVecSize);
   // u.resize(0);
   // v.resize(0);
   // u.reserve(maxVecSize);
@@ -183,7 +183,7 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
   subtype = *pData++;
 
   type = 0x10000 + (quint16(type) << 8) + (subtype & 0x1f);
-  hasExtLabel = subtype & 0x20;
+  hasExLabel = subtype & 0x20;
   // delta longitude and latitude
   dLng = gar_ptr_load(uint16_t, pData);
   pData += 2;
@@ -235,7 +235,7 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
     x1 = 0x7fffff;
   }
 
-  points << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
+  path << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
 
   // next points
   while (sr.get(x, y)) {
@@ -251,18 +251,18 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
     // u << xy.u;
     // v << xy.v;
     // points << QPointF(qRadiansToDegrees(xy.u), qRadiansToDegrees(xy.v));
-    points << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
+    path << QPointF(GRMN_RAD(x1), GRMN_RAD(y1));
   }
 
-  if (hasExtLabel) {
+  if (hasExLabel) {
     quint32 offset = gar_ptr_load(uint24_t, pData + bs_len);
     bytes_total += 3;
     // @todo: read label information
-    lbl_info = offset & 0x3FFFFF;
-    // qDebug() << "[INFO] hasExtLabel=true" << Qt::hex << offset << lbl_info;
-    ++hasExtLabelCount;
+    lblInfo = offset & 0x3FFFFF;
+    // qDebug() << "[INFO] hasExLabel=true" << Qt::hex << offset << lblInfo;
+    ++hasExLabelCount;
   } else {
-    lbl_info = 0;
+    lblInfo = 0;
   }
 
   // if (maxVecSize < u.size()) {
@@ -273,17 +273,17 @@ quint32 RgnLine::decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, 
   // v.squeeze();
   // }
 
-  if (maxVecSize < points.size()) {
-    maxVecSize = points.size();
+  if (maxVecSize < path.size()) {
+    maxVecSize = path.size();
   }
-  if (points.size() * 1.2 < maxVecSize) {
-    points.squeeze();
+  if (path.size() * 1.2 < maxVecSize) {
+    path.squeeze();
   }
 
   return bytes_total;
 }
 
-void RgnLine::bitsPerCoord(quint8 base, quint8 bfirst, quint32 &bx, quint32 &by, SignInfo_t &signinfo, bool isVer2) {
+void RgnPath::bitsPerCoord(quint8 base, quint8 bfirst, quint32 &bx, quint32 &by, SignInfo_t &signinfo, bool isVer2) {
   bool x_sign_same;
   bool y_sign_same;
 
@@ -331,7 +331,7 @@ void RgnLine::bitsPerCoord(quint8 base, quint8 bfirst, quint32 &bx, quint32 &by,
 }
 
 // extract bits per coordinate
-int RgnLine::bitsPerCoord(quint8 base, bool is_signed) {
+int RgnPath::bitsPerCoord(quint8 base, bool is_signed) {
   int n = 2;
 
   if (base <= 9) {

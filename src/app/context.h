@@ -5,16 +5,17 @@
 
 #include "config.h"
 #include "global.h"
-#include "rgnline.h"
-#include "rgnpoint.h"
+#include "hdr/supp.h"
+#include "report.h"
+#include "rgnnode.h"
+#include "rgnpath.h"
 #include "submap.h"
-#include "total.h"
 #include "warnings.h"
 
 namespace App {
 
 struct SIo {
-  QFile srcFile;
+  std::shared_ptr<QFile> srcFile;
   // QFile output;
 };
 
@@ -25,23 +26,23 @@ struct SMask {
 };
 
 struct SObjects {
-  Line_t polygons;
-  Line_t polylines;
-  Point_t points;
-  Point_t pois;
+  Nodes_t ips;
+  Nodes_t pts;
+  Paths_t lns;
+  Paths_t pgs;
 };
 
 struct SContext {
-  QString nameStr;
+  ImgHdr::SSupp hdrSupp;
   Config config;
   QTextCodec *codec;
   quint16 codepage;
   SIo io;
   Warnings stats;
-  Total total;
+  Report report;
   SMask mask;
-  SubMaps_t submaps;  // hold all submap descriptors or gmapsupp.img files can hold several submaps each with it's own submap parts
-  SObjects rgn;
+  SubMaps_t subMaps;  // hold all submap descriptors or gmapsupp.img files can hold several submaps each with it's own submap parts
+  QMap<quint8, SObjects> rgn;
 };
 
 // using Ctx = SContext;

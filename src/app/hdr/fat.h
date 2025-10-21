@@ -1,14 +1,15 @@
 #pragma once
 
-#include <QRectF>
 #include <QtTypes>
 
-#include "misc.h"
+#include "print.h"
+
+namespace ImgHdr {
+
+using App::printData;
 
 #pragma pack(push, 1)
 // IMG file header structure, to the start of the FAT blocks
-
-namespace ImgHdr {
 
 struct SFat {
   quint8 flag;                        // 0000
@@ -18,8 +19,18 @@ struct SFat {
   quint16 part;                       // 0010_0011
   std::array<quint8, 14> x0012_001F;  // 0012_001F
   std::array<quint16, 240> blocks;    // 0020_01FF
+  void print() const {
+    PRINT_HDR(flag);
+    PRINT_HDR(name);
+    PRINT_HDR(type);
+    PRINT_HDR(size);
+    PRINT_HDR(part);
+    PRINT_HDR(x0012_001F);
+    PRINT_HDR(blocks);
+    PRINT_ENDL;
+  }
 };
 
-};  // namespace ImgHdr
-
 #pragma pack(pop)
+
+};  // namespace ImgHdr

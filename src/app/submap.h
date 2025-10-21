@@ -7,18 +7,18 @@
 #include <QVector>
 
 // #include "lbl.h"
-#include "structs/img_headers.h"
-#include "structs/subdiv.h"
-#include "structs/subfile_sections.h"
-#include "subfile.h"
+#include "hdr/block.h"
+#include "hdr/section.h"
+#include "hdr/subdiv.h"
+#include "subblock.h"
 
 namespace App {
 
 class StrTbl;
 
 struct SSubMap {
-  QString name;                      // the name of the submap
-  QMap<QString, SSubFile> subFiles;  // location information of all subFiles
+  QString name;                        // the name of the submap
+  QMap<QString, SSubBlock> subBlocks;  // location information of all subBlocks
 
   double north = 0.0;  // north boundary of area covered by this submap [rad]
   double east = 0.0;   // east  boundary of area covered by this submap [rad]
@@ -30,7 +30,7 @@ struct SSubMap {
   bool isPseudoNt = false;
 
   ImgHdr::STre hdrTre;
-  ImgHdr::SRgn hdrRrn;
+  ImgHdr::SRgn hdrRgn;
   ImgHdr::SLbl hdrLbl;
   ImgHdr::SNet hdrNet;
   ImgHdr::SNod hdrNod;
@@ -38,9 +38,9 @@ struct SSubMap {
 
   QVector<ImgHdr::STre1> mapLevels;  // used maplevels
   QVector<ImgHdr::SSubDiv> subDivs;  // list of subdivisions
-  quint32 nSubdivsNext = 0;
+  quint32 nSubDivsNext = 0;
 
-  StrTbl *strTbl;  // object to manage the string table
+  std::shared_ptr<StrTbl> strTbl;  // object to manage the string table
 };
 
 using SubMaps_t = QHash<QString, SSubMap>;

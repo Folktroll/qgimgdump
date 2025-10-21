@@ -7,21 +7,22 @@
 
 namespace App {
 
-class RgnPoint {
+class RgnNode {
  public:
-  RgnPoint() = default;
-  virtual ~RgnPoint() = default;
+  RgnNode() = default;
+  virtual ~RgnNode() = default;
   quint32 decode(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData);
-  quint32 decodeExt(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData, const quint8 *pEnd);
+  quint32 decodeEx(qint32 iCenterLon, qint32 iCenterLat, quint32 shift, const quint8 *pData, const quint8 *pEnd);
   bool hasLabel() const { return !labels.isEmpty(); }
   quint32 type = 0;
   bool isLbl6 = false;
   bool hasSubType = false;
-  QPointF pos;
+  QPointF node;
+  QPointF nodeRad;
   QStringList labels;
-  quint32 lbl_ptr = 0xFFFFFFFF;
+  quint32 lblPtr = 0xFFFFFFFF;
 };
 
-using Point_t = QVector<RgnPoint>;
+using Nodes_t = QVector<RgnNode>;
 
 };  // namespace App

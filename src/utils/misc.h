@@ -4,7 +4,9 @@
 #include <QtGlobal>
 #include <QtMath>
 #include <array>
+#include <iomanip>
 #include <iostream>
+#include <type_traits>
 
 // PJ_UV.u: lng/E-W/x
 // PJ_UV.v: lat/N-S/y
@@ -29,47 +31,44 @@ void print(const QString &message) {
   fflush(stdout);
 }
 */
-
 namespace misc {
-// base
-inline void print(const QString &message) {
-  std::cout << message.toStdString() << std::endl;
+
+struct Logger {
+  // --- base print ---
+  static void print(const QString &msg) { std::cout << msg.toStdString() << std::endl; }
+
+  static void print(const std::string &msg) { std::cout << msg << std::endl; }
+
+  static void print(const char *msg) { std::cout << msg << std::endl; }
+
+  // --- debug ---
+  static void debug(const QString &msg) { print("[DEBUG] " + msg); }
+
+  static void info(const QString &msg) { print("[INFO] " + msg); }
+
+  static void error(const QString &msg) { print("[ERROR] " + msg); }
+
+  // --- universal printf-like helper ---
+  template <typename... Args>
+  static void printf(const char *format, Args &&...args) {
+    // using standard C-style printf
+    std::printf(format, std::forward<Args>(args)...);
+  }
+};
+
+template <size_t N>
+std::string arrayToString(const std::array<char, N> &arr, bool stopAtNull = true) {
+  if (stopAtNull) {
+    auto it = std::ranges::find(arr, '\0');
+    return std::string(arr.begin(), it);
+  } else {
+    return std::string(arr.begin(), arr.end());
+  }
 }
 
-// overloads
-inline void print(const std::string &message) {
-  std::cout << message << std::endl;
+template <size_t N>
+QString arrayToQString(const std::array<char, N> &arr, bool stopAtNull = true) {
+  return QString::fromLatin1(arrayToString(arr, stopAtNull));
 }
 
-inline void print(const char *message) {
-  std::cout << message << std::endl;
-}
-
-// helpers
-inline void debug(const QString &message) {
-  print("[DEBUG] " + message);
-}
-
-inline void info(const QString &message) {
-  print("[INFO] " + message);
-}
-
-inline void error(const QString &message) {
-  print("[ERROR] " + message);
-}
-
-// format
-inline void printf(const QString &format) {
-  print(format);
-}
-
-template <typename T, typename... Args>
-inline void printf(const QString &format, T &&first, Args &&...args) {
-  QString s = format.arg(std::forward<T>(first));
-  printf(s, std::forward<Args>(args)...);
-}
 }  // namespace misc
-
-#define MISC_PRINT(msg) misc::print(msg)
-#define MISC_DEBUG(msg) misc::debug(msg)
-#define MISC_ERROR(msg) misc::error(msg)

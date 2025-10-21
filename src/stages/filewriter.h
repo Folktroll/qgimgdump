@@ -3,9 +3,9 @@
 #include <QFile>
 
 #include "context.h"
-#include "rgnline.h"
-#include "rgnpoint.h"
-#include "structs/subfile_sections.h"
+#include "hdr/section.h"
+#include "rgnnode.h"
+#include "rgnpath.h"
 #include "submap.h"
 
 namespace App {
@@ -15,20 +15,20 @@ class FileWriter {
   explicit FileWriter(Ctx &ctx);
   // ~FileWriter() final;
 
+  void exportObjects();
+
  private:
   Ctx &ctx;
+  QFile &srcFile;
 
-  QString convPtDegStr(const QPointF &point, bool wkt = false) const;
-  QString convLnDegStr(const QPolygonF &polyline, bool isLine, bool wkt = false);
+  QString convPtDegStr(const QPointF &pointF, const bool &wkt) const;
+  QString convLnDegStr(const QPolygonF &polygonF, const bool &wkt) const;
 
-  void writeHeader(QFile &dstFile, const SSubMap &submap);
-  void writeCsv(QFile &dstFile, quint32 level);
-  void writeMp(QFile &dstFile, quint32 level);
+  void writeHeader(QFile &dstFile, const SSubMap &subMap) const;
+  void writeCsv(QFile &dstFile);
+  void writeMp(QFile &dstFile);
 
-  void processObjects(QFile &dstFile, const SSubMap &submap);
-  void exportObjects(QFile &srcFile);
-
-  ImgHdr::STre0 readCopyrights(QFile &srcFile, quint32 baseOffset, quint32 limitOffset) const;
+  ImgHdr::STre0 readCopyrights(quint32 baseOffset, quint32 limitOffset) const;
 };
 
 }  // namespace App
